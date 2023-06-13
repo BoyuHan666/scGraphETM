@@ -10,8 +10,7 @@ git remote add origin git@github.com:BoyuHan666/scGraphETM.git
 ### Develop on a feature branch
 
 ```
-git checkout master
-git pull origin master
+git pull origin main
 git checkout -b my-branch
 # Write some code
 ```
