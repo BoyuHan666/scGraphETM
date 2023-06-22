@@ -46,7 +46,7 @@ if __name__ == '__main__':
     import anndata as ad
 
     # plot_path_rel = "./Ma_plot/"
-    plot_path_rel = "./han_plot"
+    plot_path_rel = "./han_plot/"
 
     scRNA_adata = ad.read_h5ad("./data/10x-Multiome-Pbmc10k-RNA.h5ad")
     scATAC_adata = ad.read_h5ad("./data/10x-Multiome-Pbmc10k-ATAC.h5ad")
@@ -101,7 +101,7 @@ if __name__ == '__main__':
     num_of_peak = scATAC_adata.n_vars
     num_of_cell = 2000
     num_of_gene = 2000
-    num_of_peak = 8000
+    num_of_peak = 2000
     print(num_of_cell, num_of_gene, num_of_peak)
     print("----------------------")
     scATAC_1000 = scATAC_adata_copy[:, index2]
@@ -544,7 +544,7 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch
 
-    # from seaborn import heatmap, lineplot, clustermap
+    from seaborn import heatmap, lineplot, clustermap
 
 
     def evaluate_ari(cell_embed, adata):
@@ -702,9 +702,9 @@ if __name__ == '__main__':
 
     from torch_geometric.data import InMemoryDataset, Data
 
-    num_of_topic = 20
+    num_of_topic = 60
     t_hidden_size = 512
-    t_hidden_size_peak = 800
+    t_hidden_size_peak = 512
     rho_size = 512
     eta_size = 512
     emb_size = 512
@@ -712,7 +712,7 @@ if __name__ == '__main__':
     # graph_tensor = torch.from_numpy(cor_mat)
     feature_matrix = torch.randn((num_of_peak + num_of_gene, graph_feature_size)).to('cuda')
     ari_freq = 100
-    num_of_epochs = 1000
+    num_of_epochs = 2000
 
     print(num_of_gene, num_of_peak)
 
@@ -734,7 +734,7 @@ if __name__ == '__main__':
                     feature_matrix=feature_matrix,
                     edge_index=edge_index).to('cuda')
 
-    optimizer = optim.AdamW(model.parameters(), lr=0.0003, weight_decay=1.2e-6)
+    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1.2e-6)
     print("-----------------------")
     print(model)
 
@@ -752,86 +752,129 @@ if __name__ == '__main__':
     # monitor_perf2(GNN_ETM_perf, ari_perf, ari_freq, "NELBO")
     monitor_perf2(GNN_ETM_perf, ari_perf, ari_freq, "both", plot_path_rel)
 
-    # genes = scRNA_adata.obs["cell_type"][:num_of_cell]
-    # lut = dict(zip(genes.unique(), ['red',
-    #                                 '#00FF00',
-    #                                 '#0000FF',
-    #                                 '#FFFF00',
-    #                                 '#FF00FF',
-    #                                 '#00FFFF',
-    #                                 '#FFA500',
-    #                                 '#800080',
-    #                                 '#FFC0CB',
-    #                                 '#FF69B4',
-    #                                 '#00FF7F',
-    #                                 '#FFD700',
-    #                                 '#1E90FF',
-    #                                 '#2F4F4F',
-    #                                 '#808000',
-    #                                 '#FF8C00',
-    #                                 '#8B0000',
-    #                                 '#4B0082',
-    #                                 '#2E8B57',
-    #                                 '#FF1493',
-    #                                 '#6B8E23',
-    #                                 '#48D1CC',
-    #                                 '#B22222',
-    #                                 '#DC143C',
-    #                                 '#008080']))
-    # row_colors = genes.map(lut)
-    # data = [row_colors[i] for i in range(len(row_colors))]
-    # row_colors = pd.Series(data)
-    # theta, theta_g, theta_p = get_theta_GCN(model, scRNA_1000_tensor_normalized, scATAC_1000_tensor_normalized)
-    # theta_T = (theta.detach().cpu().numpy())
-    # clustermap(pd.DataFrame(theta_T), center=0, cmap="RdBu_r", row_colors=row_colors)
-    #
-    # from matplotlib.patches import Patch
-    #
-    # handles = [Patch(facecolor=lut[name]) for name in lut]
-    # plt.legend(handles, lut, title='Cell Types',
-    #            bbox_to_anchor=(1, 1), bbox_transform=plt.gcf().transFigure, loc='upper right')
-    #
-    # """## Gene"""
-    #
-    # genes = scRNA_adata.obs["cell_type"][:num_of_cell]
-    # lut = dict(zip(genes.unique(), ['red',
-    #                                 '#00FF00',
-    #                                 '#0000FF',
-    #                                 '#FFFF00',
-    #                                 '#FF00FF',
-    #                                 '#00FFFF',
-    #                                 '#FFA500',
-    #                                 '#800080',
-    #                                 '#FFC0CB',
-    #                                 '#FF69B4',
-    #                                 '#00FF7F',
-    #                                 '#FFD700',
-    #                                 '#1E90FF',
-    #                                 '#2F4F4F',
-    #                                 '#808000',
-    #                                 '#FF8C00',
-    #                                 '#8B0000',
-    #                                 '#4B0082',
-    #                                 '#2E8B57',
-    #                                 '#FF1493',
-    #                                 '#6B8E23',
-    #                                 '#48D1CC',
-    #                                 '#B22222',
-    #                                 '#DC143C',
-    #                                 '#008080']))
-    # row_colors = genes.map(lut)
-    # data = [row_colors[i] for i in range(len(row_colors))]
-    # row_colors = pd.Series(data)
-    # theta, theta_g, theta_p = get_theta_GCN(model, scRNA_1000_tensor_normalized, scATAC_1000_tensor_normalized)
-    # theta_T = (theta_g.detach().cpu().numpy())
-    # clustermap(pd.DataFrame(theta_T), center=0, cmap="RdBu_r", row_colors=row_colors)
-    #
-    # from matplotlib.patches import Patch
-    #
-    # handles = [Patch(facecolor=lut[name]) for name in lut]
-    # plt.legend(handles, lut, title='Cell Types',
-    #            bbox_to_anchor=(1, 1), bbox_transform=plt.gcf().transFigure, loc='upper right')
-    #
+    genes = scRNA_adata.obs["cell_type"][:num_of_cell]
+    lut = dict(zip(genes.unique(), ['red',
+                                    '#00FF00',
+                                    '#0000FF',
+                                    '#FFFF00',
+                                    '#FF00FF',
+                                    '#00FFFF',
+                                    '#FFA500',
+                                    '#800080',
+                                    '#FFC0CB',
+                                    '#FF69B4',
+                                    '#00FF7F',
+                                    '#FFD700',
+                                    '#1E90FF',
+                                    '#2F4F4F',
+                                    '#808000',
+                                    '#FF8C00',
+                                    '#8B0000',
+                                    '#4B0082',
+                                    '#2E8B57',
+                                    '#FF1493',
+                                    '#6B8E23',
+                                    '#48D1CC',
+                                    '#B22222',
+                                    '#DC143C',
+                                    '#008080']))
+    row_colors = genes.map(lut)
+    data = [row_colors[i] for i in range(len(row_colors))]
+    row_colors = pd.Series(data)
+    theta, theta_g, theta_p = get_theta_GCN(model, scRNA_1000_tensor_normalized, scATAC_1000_tensor_normalized)
+    theta_T = (theta.detach().cpu().numpy())
+    clustermap(pd.DataFrame(theta_T), center=0, cmap="RdBu_r", row_colors=row_colors)
+
+    from matplotlib.patches import Patch
+
+    handles = [Patch(facecolor=lut[name]) for name in lut]
+    plt.legend(handles, lut, title='Cell Types',
+               bbox_to_anchor=(1, 1), bbox_transform=plt.gcf().transFigure, loc='upper right')
+    plt.savefig(plot_path_rel + 'cell_heatmap.png')
+
+    """## Gene"""
+
+    genes = scRNA_adata.obs["cell_type"][:num_of_cell]
+    lut = dict(zip(genes.unique(), ['red',
+                                    '#00FF00',
+                                    '#0000FF',
+                                    '#FFFF00',
+                                    '#FF00FF',
+                                    '#00FFFF',
+                                    '#FFA500',
+                                    '#800080',
+                                    '#FFC0CB',
+                                    '#FF69B4',
+                                    '#00FF7F',
+                                    '#FFD700',
+                                    '#1E90FF',
+                                    '#2F4F4F',
+                                    '#808000',
+                                    '#FF8C00',
+                                    '#8B0000',
+                                    '#4B0082',
+                                    '#2E8B57',
+                                    '#FF1493',
+                                    '#6B8E23',
+                                    '#48D1CC',
+                                    '#B22222',
+                                    '#DC143C',
+                                    '#008080']))
+    row_colors = genes.map(lut)
+    data = [row_colors[i] for i in range(len(row_colors))]
+    row_colors = pd.Series(data)
+    theta, theta_g, theta_p = get_theta_GCN(model, scRNA_1000_tensor_normalized, scATAC_1000_tensor_normalized)
+    theta_T = (theta_g.detach().cpu().numpy())
+    clustermap(pd.DataFrame(theta_T), center=0, cmap="RdBu_r", row_colors=row_colors)
+
+    from matplotlib.patches import Patch
+
+    handles = [Patch(facecolor=lut[name]) for name in lut]
+    plt.legend(handles, lut, title='Cell Types',
+               bbox_to_anchor=(1, 1), bbox_transform=plt.gcf().transFigure, loc='upper right')
+    plt.savefig(plot_path_rel + 'gene_heatmap.png')
+    """## Gene"""
+
+    genes = scRNA_adata.obs["cell_type"][:num_of_cell]
+    lut = dict(zip(genes.unique(), ['red',
+                                    '#00FF00',
+                                    '#0000FF',
+                                    '#FFFF00',
+                                    '#FF00FF',
+                                    '#00FFFF',
+                                    '#FFA500',
+                                    '#800080',
+                                    '#FFC0CB',
+                                    '#FF69B4',
+                                    '#00FF7F',
+                                    '#FFD700',
+                                    '#1E90FF',
+                                    '#2F4F4F',
+                                    '#808000',
+                                    '#FF8C00',
+                                    '#8B0000',
+                                    '#4B0082',
+                                    '#2E8B57',
+                                    '#FF1493',
+                                    '#6B8E23',
+                                    '#48D1CC',
+                                    '#B22222',
+                                    '#DC143C',
+                                    '#008080']))
+    row_colors = genes.map(lut)
+    data = [row_colors[i] for i in range(len(row_colors))]
+    row_colors = pd.Series(data)
+    theta, theta_g, theta_p = get_theta_GCN(model, scRNA_1000_tensor_normalized, scATAC_1000_tensor_normalized)
+    theta_T = (theta_p.detach().cpu().numpy())
+    clustermap(pd.DataFrame(theta_T), center=0, cmap="RdBu_r", row_colors=row_colors)
+
+    from matplotlib.patches import Patch
+
+    handles = [Patch(facecolor=lut[name]) for name in lut]
+    plt.legend(handles, lut, title='Cell Types',
+               bbox_to_anchor=(1, 1), bbox_transform=plt.gcf().transFigure, loc='upper right')
+    plt.savefig(plot_path_rel + 'peak_heatmap.png')
+
     # K = 5
     # topfeatures = np.zeros((K * num_of_topics, num_of_topics))
     # select = []
