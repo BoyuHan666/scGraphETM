@@ -843,8 +843,8 @@ if __name__ == '__main__':
     sparse_cor_mat = csr_matrix(cor_mat)
     # sparse_cor_mat_val = csr_matrix(cor_mat)
     # print(sparse_gene_cor_mat)
-    rows, cols = sparse_peak_cor_mat.nonzero()
-    edge_index = torch.tensor(np.array([peak_rows, peak_cols]), dtype=torch.long, device=device)
+    rows, cols = sparse_cor_mat.nonzero()
+    edge_index = torch.tensor(np.array([rows, cols]), dtype=torch.long, device=device)
 
     # rows2, cols2 = sparse_cor_mat_val.nonzero()
     # edge_index_val = torch.tensor(np.array([rows2, cols2]), dtype=torch.long, device=device)
