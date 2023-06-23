@@ -1,7 +1,7 @@
 import torch
 from scipy import stats
 from torch.nn import functional as F
-from sklearn.metrics import adjusted_rand_score
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from torch.autograd import Variable
 
 import anndata as ad
@@ -29,6 +29,37 @@ def evaluate_ari(cell_embed, adata):
     sc.tl.louvain(adata, resolution=0.15)
     ari = adjusted_rand_score(adata.obs['Celltype'], adata.obs['louvain'])
     return ari
+
+
+def evaluate_ari2(cell_embed, adata):
+    adata.obsm['cell_embed'] = cell_embed
+    clustering_func, best_clustering_method, best_n_neighbor = None, None, None
+    clustering_methods = ["louvain"]
+    best_resolution, best_ari, best_nmi = 0, 0, 0
+    # resolutions = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64]
+    resolutions = [0.15]
+    n_neighbors = [30]
+    for n_neighbor in n_neighbors:
+        sc.pp.neighbors(adata, use_rep="cell_embed", n_neighbors=n_neighbor)
+
+        for clustering_method in clustering_methods:
+            if clustering_method == 'louvain':
+                clustering_func = sc.tl.louvain
+
+            for resolution in resolutions:
+                col = f'{clustering_method}_{resolution}'
+                clustering_func(adata, resolution=resolution, key_added=col)
+                ari = adjusted_rand_score(adata.obs['Celltype'], adata.obs[col])
+                nmi = normalized_mutual_info_score(adata.obs['Celltype'], adata.obs[col])
+                if ari > best_ari:
+                    best_resolution = resolution
+                    best_ari = ari
+                    best_clustering_method = clustering_method
+                    best_n_neighbor = n_neighbor
+                if nmi > best_nmi:
+                    best_nmi = nmi
+
+    return f'{best_n_neighbor}_{best_clustering_method}_{best_resolution}', best_ari, best_nmi
 
 
 def reparameterize(mu, logvar):
