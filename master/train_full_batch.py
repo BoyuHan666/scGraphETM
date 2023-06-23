@@ -70,10 +70,21 @@ def train(model_tuple, optimizer1, optimizer2, train_set, total_training_set, te
                 X_rna_test_tensor_normalized, X_atac_test_tensor_normalized,
                 test_feature_matrix, test_edge_index, use_mlp)
 
-            ari = helper2.evaluate_ari(theta.to('cpu'), scRNA_test_anndata)
-            ari_train = helper2.evaluate_ari(theta_train.to('cpu'), total_scRNA_anndata)
+            # ari = helper2.evaluate_ari(theta.to('cpu'), scRNA_test_anndata)
+            # ari_train = helper2.evaluate_ari(theta_train.to('cpu'), total_scRNA_anndata)
+            #
+            # print('Iter: {} ..  NELBO: {:.4f} .. Train ARI: {:.4f} .. Val ARI: {:.4f}'.format(i, NELBO, ari_train, ari))
 
-            print('Iter: {} ..  NELBO: {:.4f} .. Train ARI: {:.4f} .. Val ARI: {:.4f}'.format(i, NELBO, ari_train, ari))
+            res, ari, nmi = helper2.evaluate_ari2(theta.to('cpu'), scRNA_test_anndata)
+            res_train, ari_train, nmi_train = helper2.evaluate_ari2(theta_train.to('cpu'), total_scRNA_anndata)
+
+            print('====  Iter: {},  NELBO: {:.4f}  ====\n'
+                  'Train res: {}\t Train ARI: {:.4f}\t Train NMI: {:.4f}\n'
+                  'Valid res: {}\t Valid ARI: {:.4f}\t Valid NMI: {:.4f}\n'
+                  .format(i, NELBO,
+                          res_train, ari_train, nmi_train,
+                          res, ari, nmi)
+                  )
 
             if best_ari < ari:
                 best_ari = ari
