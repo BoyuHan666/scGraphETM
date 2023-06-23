@@ -9,7 +9,10 @@ import model2
 import view_result
 
 
-def train(model_tuple, optimizer, train_set, total_training_set, test_set, metric, ari_freq, niter):
+def train(model_tuple, optimizer,
+          train_set, total_training_set, test_set,
+          metric, ari_freq, niter,
+          use_mlp, use_mask):
     NELBO = None
     best_ari = 0
     best_train_ari = 0
@@ -29,7 +32,7 @@ def train(model_tuple, optimizer, train_set, total_training_set, test_set, metri
      total_feature_matrix, total_edge_index) = total_training_set
 
     print(f"val set tensor dim: {X_rna_test_tensor_normalized.shape}")
-    print(f"val set tensor dim: {total_X_rna_tensor_normalized.shape}")
+    print(f"train set tensor dim: {total_X_rna_tensor_normalized.shape}")
 
     (encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder) = model_tuple
 
@@ -38,12 +41,13 @@ def train(model_tuple, optimizer, train_set, total_training_set, test_set, metri
         for train_batch in train_set:
             (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
              scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix,
-             peak_correlation_matrix, feature_matrix, edge_index) = train_batch
+             peak_correlation_matrix, feature_matrix, edge_index, mask_matrix1, mask_matrix2) = train_batch
 
             NELBO = helper2.train_one_epoch_pog(
                 encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimizer, X_rna_tensor,
                 X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized, feature_matrix,
-                edge_index, gene_correlation_matrix, peak_correlation_matrix, kl_weight, False
+                edge_index, gene_correlation_matrix, peak_correlation_matrix, kl_weight, use_mlp,
+                use_mask, mask_matrix1, mask_matrix2
             )
 
         if i % ari_freq == 0:
@@ -106,7 +110,7 @@ if __name__ == "__main__":
     num_of_peak = 2000
     test_num_of_cell = 2000
     batch_size = 2000
-    batch_num = 4
+    batch_num = 3
     emb_size = 512
     emb_size2 = 512
     num_of_topic = 20
@@ -116,6 +120,9 @@ if __name__ == "__main__":
     plot_path_rel = "./plot/"
     metric = 'theta'  # mu or theta
     lr = 0.001
+    use_mlp = False
+    use_mask = False
+    mask_ratio = 0.2
 
     if torch.cuda.is_available():
         print("=======  GPU device found  =======")
@@ -139,7 +146,8 @@ if __name__ == "__main__":
         emb_size=emb_size,
         use_highly_variable=True,
         cor='pearson',
-        val=1 # 0 for using a new test set other than train set, 1 for using train set to calculate ari
+        use_mask=use_mask,
+        mask_ratio=mask_ratio,
     )
 
     encoder1 = model2.VAE(num_of_gene, emb_size, num_of_topic).to(device)
@@ -175,7 +183,9 @@ if __name__ == "__main__":
         test_set=test_set,
         metric=metric,
         ari_freq=ari_freq,
-        niter=num_epochs
+        niter=num_epochs,
+        use_mlp=use_mlp,
+        use_mask=use_mask,
     )
     ed = time.time()
     print(f"training time: {ed - st}")

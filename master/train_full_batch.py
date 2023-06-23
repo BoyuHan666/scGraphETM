@@ -11,7 +11,9 @@ import model2
 import view_result
 
 
-def train(model_tuple, optimizer1, optimizer2, train_set, total_training_set, test_set, metric, ari_freq, niter, use_mlp):
+def train(model_tuple, optimizer1, optimizer2,
+          train_set, total_training_set, test_set, metric,
+          ari_freq, niter, use_mlp, use_mask, mask1, mask2):
     NELBO = None
     best_ari = 0
     best_train_ari = 0
@@ -31,7 +33,7 @@ def train(model_tuple, optimizer1, optimizer2, train_set, total_training_set, te
      total_feature_matrix, total_edge_index) = total_training_set
 
     print(f"val set tensor dim: {X_rna_test_tensor_normalized.shape}")
-    print(f"val set tensor dim: {total_X_rna_tensor_normalized.shape}")
+    print(f"train set tensor dim: {total_X_rna_tensor_normalized.shape}")
 
     (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2) = model_tuple
 
@@ -50,7 +52,8 @@ def train(model_tuple, optimizer1, optimizer2, train_set, total_training_set, te
         NELBO = helper2.train_one_epoch(
             encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, optimizer1, X_rna_tensor,
             X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized, feature_matrix,
-            edge_index, gene_correlation_matrix, peak_correlation_matrix, kl_weight, use_mlp
+            edge_index, gene_correlation_matrix, peak_correlation_matrix, kl_weight, use_mlp,
+            use_mask, mask1, mask2
         )
 
         if i % ari_freq == 0:
@@ -122,6 +125,8 @@ if __name__ == "__main__":
     metric = 'theta'  # mu or theta
     lr = 0.001
     use_mlp = False
+    use_mask = False
+    mask_ratio = 0.2
 
     if torch.cuda.is_available():
         print("=======  GPU device found  =======")
@@ -132,7 +137,7 @@ if __name__ == "__main__":
         device = torch.device("cpu")
         print("=======  No GPU found  =======")
 
-    training_set, total_training_set, test_set, scRNA_adata, scATAC_adata = full_batch.process_full_batch_data(
+    training_set, total_training_set, test_set, scRNA_adata, scATAC_adata, mask_matrix1, mask_matrix2 = full_batch.process_full_batch_data(
         rna_path=rna_path,
         atac_path=atac_path,
         device=device,
@@ -143,7 +148,8 @@ if __name__ == "__main__":
         emb_size=emb_size,
         use_highly_variable=True,
         cor='pearson',
-        val=1 # 0 for using a new test set other than train set, 1 for using train set to calculate ari
+        use_mask=use_mask,
+        mask_ratio=mask_ratio
     )
 
     encoder1 = model2.VAE(num_of_gene, emb_size, num_of_topic).to(device)
@@ -187,6 +193,9 @@ if __name__ == "__main__":
         ari_freq=ari_freq,
         niter=num_epochs,
         use_mlp=use_mlp,
+        use_mask=use_mask,
+        mask1=mask_matrix1,
+        mask2=mask_matrix2,
     )
     ed = time.time()
     print(f"training time: {ed - st}")

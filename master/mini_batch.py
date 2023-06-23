@@ -152,7 +152,7 @@ def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata
 def process_mini_batch_data(rna_path, atac_path, device,
                             num_of_cell, num_of_gene, num_of_peak,
                             test_num_of_cell, batch_size, batch_num,
-                            emb_size, use_highly_variable, cor, val=0):
+                            emb_size, use_highly_variable, cor, use_mask, mask_ratio):
     print("======  start processing data  ======")
     feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
     training_set = []
@@ -210,6 +210,7 @@ def process_mini_batch_data(rna_path, atac_path, device,
         print(f"process batches [{i + 1} / {batch_num}]")
         selected_cells = np.random.choice(num_of_cell, size=batch_size, replace=False)
         # selected_cells = np.array(sorted(selected_cells))
+
         """
         =====================================================================================
         Generate: X_rna_tensor, X_rna_tensor_normalized, scRNA_mini_batch_anndata
@@ -218,8 +219,20 @@ def process_mini_batch_data(rna_path, atac_path, device,
         scRNA_adata_mini_batch = scRNA_adata[:num_of_cell, :]
         scRNA_adata_mini_batch = scRNA_adata_mini_batch[selected_cells, :]
 
-        X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene]
+        gene_expression = scRNA_adata_mini_batch.X[:num_of_cell, :num_of_gene]
+        mask_matrix1 = np.random.choice([0, 1], size=gene_expression.shape, p=[mask_ratio, 1 - mask_ratio])
+
+        if use_mask:
+            X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene] * mask_matrix1
+            mask_matrix1 = torch.from_numpy(mask_matrix1)
+            mask_matrix1 = torch.tensor(mask_matrix1, dtype=torch.float32)
+            mask_matrix1 = mask_matrix1.to(device)
+            # print(sum(mask_matrix1))
+        else:
+            X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene]
+
         X_rna_tensor = torch.from_numpy(X_rna)
+        X_rna_tensor = torch.tensor(X_rna_tensor, dtype=torch.float32)
         sums_rna = X_rna_tensor.sum(1).unsqueeze(1)
         X_rna_tensor_normalized = X_rna_tensor / sums_rna
 
@@ -234,8 +247,20 @@ def process_mini_batch_data(rna_path, atac_path, device,
         scATAC_adata_mini_batch = scATAC_adata[:num_of_cell, :]
         scATAC_adata_mini_batch = scATAC_adata_mini_batch[selected_cells, :]
 
-        X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak]
+        peak_expression = scATAC_adata_mini_batch.X[:num_of_cell, :num_of_peak]
+        mask_matrix2 = np.random.choice([0, 1], size=peak_expression.shape, p=[mask_ratio, 1 - mask_ratio])
+
+        if use_mask:
+            X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak] * mask_matrix2
+            mask_matrix2 = torch.from_numpy(mask_matrix2)
+            mask_matrix2 = torch.tensor(mask_matrix2, dtype=torch.float32)
+            mask_matrix2 = mask_matrix2.to(device)
+            # print(sum(mask_matrix2))
+        else:
+            X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak]
+
         X_atac_tensor = torch.from_numpy(X_atac)
+        X_atac_tensor = torch.tensor(X_atac_tensor, dtype=torch.float32)
         sums_atac = X_atac_tensor.sum(1).unsqueeze(1)
         X_atac_tensor_normalized = X_atac_tensor / sums_atac
 
@@ -262,7 +287,7 @@ def process_mini_batch_data(rna_path, atac_path, device,
 
         training_batch = (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
                           scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix,
-                          peak_correlation_matrix, feature_matrix, edge_index)
+                          peak_correlation_matrix, feature_matrix, edge_index, mask_matrix1, mask_matrix2)
 
         training_set.append(training_batch)
 
@@ -294,7 +319,8 @@ if __name__ == "__main__":
         batch_num=2,
         emb_size=512,
         use_highly_variable=True,
-        cor='pearson'
+        cor='pearson',
+        use_mask=False
     )
 
     X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized, \
