@@ -130,7 +130,7 @@ class LDEC(nn.Module):
         res = torch.mm(theta, beta)
         preds = torch.log(res + 1e-6)
         batch_bias = F.log_softmax(self.batch_bias, dim=-1)
-        preds += batch_bias
+        # preds += batch_bias
         return preds
 
     def get_beta(self):
@@ -167,7 +167,7 @@ class POG_DEC(nn.Module):
         res = torch.mm(theta, beta)
         preds = torch.log(res + 1e-6)
         batch_bias = F.log_softmax(self.batch_bias, dim=-1)
-        preds += batch_bias
+        # preds += batch_bias
 
         if matrix2 is None:
             beta2 = F.softmax(self.alphas2(self.rho2), dim=0).transpose(1, 0)
@@ -177,7 +177,7 @@ class POG_DEC(nn.Module):
         res2 = torch.mm(theta, beta2)
         preds2 = torch.log(res2 + 1e-6)
         batch_bias2 = F.log_softmax(self.batch_bias2, dim=-1)
-        preds2 += batch_bias2
+        # preds2 += batch_bias2
 
         return preds, preds2
 

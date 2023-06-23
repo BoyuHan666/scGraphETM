@@ -11,10 +11,12 @@ import model2
 import view_result
 
 
-def train(model_tuple, optimizer1, optimizer2, train_set, test_set, metric, ari_freq, niter, use_mlp):
+def train(model_tuple, optimizer1, optimizer2, train_set, total_training_set, test_set, metric, ari_freq, niter, use_mlp):
     NELBO = None
     best_ari = 0
+    best_train_ari = 0
     best_theta = None
+    best_train_theta = None
     best_beta_gene = None
     best_beta_peak = None
 
@@ -22,6 +24,14 @@ def train(model_tuple, optimizer1, optimizer2, train_set, test_set, metric, ari_
      X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
      test_gene_correlation_matrix, test_peak_correlation_matrix,
      test_feature_matrix, test_edge_index) = test_set
+
+    (total_X_rna_tensor, total_X_rna_tensor_normalized, total_X_atac_tensor,
+     total_X_atac_tensor_normalized, total_scRNA_anndata, total_scATAC_anndata,
+     total_gene_correlation_matrix, total_peak_correlation_matrix,
+     total_feature_matrix, total_edge_index) = total_training_set
+
+    print(f"val set tensor dim: {X_rna_test_tensor_normalized.shape}")
+    print(f"val set tensor dim: {total_X_rna_tensor_normalized.shape}")
 
     (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2) = model_tuple
 
@@ -50,26 +60,37 @@ def train(model_tuple, optimizer1, optimizer2, train_set, test_set, metric, ari_
                 X_rna_test_tensor_normalized, X_atac_test_tensor_normalized, metric
             )
 
+            theta_train, theta_gene_train, theta_peak_train = helper2.get_theta_GNN(
+                encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
+                total_X_rna_tensor_normalized, total_X_atac_tensor_normalized, metric
+            )
+
             beta_gene, beta_peak = helper2.get_beta_GNN(
                 encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
                 X_rna_test_tensor_normalized, X_atac_test_tensor_normalized,
                 test_feature_matrix, test_edge_index, use_mlp)
 
             ari = helper2.evaluate_ari(theta.to('cpu'), scRNA_test_anndata)
+            ari_train = helper2.evaluate_ari(theta_train.to('cpu'), total_scRNA_anndata)
 
-            print('Iter: {} ..  NELBO: {:.4f} .. ARI: {:.4f}'.format(i, NELBO, ari))
+            print('Iter: {} ..  NELBO: {:.4f} .. Train ARI: {:.4f} .. Val ARI: {:.4f}'.format(i, NELBO, ari_train, ari))
 
             if best_ari < ari:
                 best_ari = ari
                 best_theta = theta
                 best_beta_gene = beta_gene
                 best_beta_peak = beta_peak
+
+            if best_train_ari < ari_train:
+                best_train_ari = ari_train
+                best_train_theta = theta_train
         else:
             if i % 100 == 0:
                 print("Iter: " + str(i))
 
     return (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
-            best_ari, best_theta, best_beta_gene, best_beta_peak)
+            best_ari, best_theta, best_beta_gene, best_beta_peak,
+            best_train_ari, best_train_theta)
 
 
 if __name__ == "__main__":
@@ -79,7 +100,7 @@ if __name__ == "__main__":
     num_of_cell = 2000
     num_of_gene = 2000
     num_of_peak = 2000
-    test_num_of_cell = 2000
+    test_num_of_cell = 1000
     emb_size = 512
     emb_size2 = 512
     num_of_topic = 60
@@ -100,7 +121,7 @@ if __name__ == "__main__":
         device = torch.device("cpu")
         print("=======  No GPU found  =======")
 
-    training_set, test_set, scRNA_adata, scATAC_adata = full_batch.process_full_batch_data(
+    training_set, total_training_set, test_set, scRNA_adata, scATAC_adata = full_batch.process_full_batch_data(
         rna_path=rna_path,
         atac_path=atac_path,
         device=device,
@@ -143,11 +164,13 @@ if __name__ == "__main__":
     print(f"=========  start training {num_of_topic} =========")
     st = time.time()
     (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
-     best_ari, best_theta, best_beta_gene, best_beta_peak) = train(
+     best_ari, best_theta, best_beta_gene, best_beta_peak,
+     best_train_ari, best_train_theta) = train(
         model_tuple=model_tuple,
         optimizer1=optimizer_adam,
         optimizer2=optimizer_adam,
         train_set=training_set,
+        total_training_set=total_training_set,
         test_set=test_set,
         metric=metric,
         ari_freq=ari_freq,
@@ -157,7 +180,7 @@ if __name__ == "__main__":
     ed = time.time()
     print(f"training time: {ed - st}")
 
-    print(best_ari)
+    print(f"best_train_ari: {best_train_ari}, best_val_ari: {best_ari}")
     print("=========  generate_clustermap  =========")
     (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
      X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
