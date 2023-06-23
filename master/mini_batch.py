@@ -86,50 +86,14 @@ def cal_cor(scRNA_adata_mini_batch, scATAC_adata_mini_batch, num_of_gene, num_of
     return gene_correlation_matrix, peak_correlation_matrix, edge_index
 
 
-def process_mini_batch_data(rna_path, atac_path, device,
-                            num_of_cell, num_of_gene, num_of_peak,
-                            test_num_of_cell, batch_size, batch_num,
-                            emb_size, use_highly_variable, cor, val=0):
-    print("======  start processing data  ======")
-    feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
-    training_set = []
-
+def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata, cor, feature_matrix, device):
     """
-    =====================================================================================
-    Generate: scRNA_adata, scATAC_adata
-    =====================================================================================
-    """
-
-    scRNA_adata = anndata.read_h5ad(rna_path)
-    scATAC_adata = anndata.read_h5ad(atac_path)
-
-    if use_highly_variable:
-        index1 = scRNA_adata.var['highly_variable'].values
-        scRNA_adata = scRNA_adata[:, index1]
-
-        scATAC_adata_copy = scATAC_adata.copy()
-        sc.pp.normalize_total(scATAC_adata_copy, target_sum=1e4)
-        sc.pp.log1p(scATAC_adata_copy)
-        sc.pp.highly_variable_genes(scATAC_adata_copy)
-        scATAC_adata.var['highly_variable'] = scATAC_adata_copy.var['highly_variable']
-
-        index2 = scATAC_adata.var['highly_variable'].values
-        scATAC_adata = scATAC_adata[:, index2]
-
-    # print(scRNA_adata)
-    # print(scATAC_adata)
-
-    """
-    =====================================================================================
-    Generate: X_rna_test_tensor, X_rna_test_tensor_normalized, scRNA_test_anndata
-    =====================================================================================
-    """
-    if val == 0:
-        test_end = (num_of_cell + test_num_of_cell)
-        test_start = num_of_cell
-    else:
-        test_end = num_of_cell
-        test_start = 0
+   =====================================================================================
+   Generate: X_rna_test_tensor, X_rna_test_tensor_normalized, scRNA_test_anndata
+   =====================================================================================
+   """
+    test_end = end
+    test_start = start
 
     scRNA_adata_test = scRNA_adata[test_start:test_end, :num_of_gene]
 
@@ -182,8 +146,68 @@ def process_mini_batch_data(rna_path, atac_path, device,
                 test_gene_correlation_matrix, test_peak_correlation_matrix,
                 feature_matrix, test_edge_index)
 
+    return test_set
+
+
+def process_mini_batch_data(rna_path, atac_path, device,
+                            num_of_cell, num_of_gene, num_of_peak,
+                            test_num_of_cell, batch_size, batch_num,
+                            emb_size, use_highly_variable, cor, val=0):
+    print("======  start processing data  ======")
+    feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
+    training_set = []
+
+    """
+    =====================================================================================
+    Generate: scRNA_adata, scATAC_adata
+    =====================================================================================
+    """
+
+    scRNA_adata = anndata.read_h5ad(rna_path)
+    scATAC_adata = anndata.read_h5ad(atac_path)
+
+    if use_highly_variable:
+        index1 = scRNA_adata.var['highly_variable'].values
+        scRNA_adata = scRNA_adata[:, index1]
+
+        scATAC_adata_copy = scATAC_adata.copy()
+        sc.pp.normalize_total(scATAC_adata_copy, target_sum=1e4)
+        sc.pp.log1p(scATAC_adata_copy)
+        sc.pp.highly_variable_genes(scATAC_adata_copy)
+        scATAC_adata.var['highly_variable'] = scATAC_adata_copy.var['highly_variable']
+
+        index2 = scATAC_adata.var['highly_variable'].values
+        scATAC_adata = scATAC_adata[:, index2]
+
+    # print(scRNA_adata)
+    # print(scATAC_adata)
+
+    total_training_set = get_val_data(
+        start=0,
+        end=num_of_cell,
+        num_of_gene=num_of_gene,
+        num_of_peak=num_of_peak,
+        scRNA_adata=scRNA_adata,
+        scATAC_adata=scATAC_adata,
+        cor=cor,
+        feature_matrix=feature_matrix,
+        device=device,
+    )
+
+    test_set = get_val_data(
+        start=num_of_cell,
+        end=num_of_cell+test_num_of_cell,
+        num_of_gene=num_of_gene,
+        num_of_peak=num_of_peak,
+        scRNA_adata=scRNA_adata,
+        scATAC_adata=scATAC_adata,
+        cor=cor,
+        feature_matrix=feature_matrix,
+        device=device,
+    )
+
     for i in range(batch_num):
-        print(f"process batches [{i+1} / {batch_num}]")
+        print(f"process batches [{i + 1} / {batch_num}]")
         selected_cells = np.random.choice(num_of_cell, size=batch_size, replace=False)
         # selected_cells = np.array(sorted(selected_cells))
         """
@@ -242,7 +266,7 @@ def process_mini_batch_data(rna_path, atac_path, device,
 
         training_set.append(training_batch)
 
-    return training_set, test_set, scRNA_adata, scATAC_adata
+    return training_set, total_training_set, test_set, scRNA_adata, scATAC_adata
 
 
 if __name__ == "__main__":
@@ -258,16 +282,16 @@ if __name__ == "__main__":
     rna_path = "../data/10x-Multiome-Pbmc10k-RNA.h5ad"
     atac_path = "../data/10x-Multiome-Pbmc10k-ATAC.h5ad"
 
-    training_set, test_set, scRNA_adata, scATAC_adata = process_mini_batch_data(
+    training_set, total_training_set, test_set, scRNA_adata, scATAC_adata = process_mini_batch_data(
         rna_path=rna_path,
         atac_path=atac_path,
         device=device,
-        num_of_cell=400,
+        num_of_cell=6000,
         num_of_gene=200,
         num_of_peak=200,
-        test_num_of_cell=100,
+        test_num_of_cell=2000,
         batch_size=400,
-        batch_num=1,
+        batch_num=2,
         emb_size=512,
         use_highly_variable=True,
         cor='pearson'
@@ -278,16 +302,21 @@ if __name__ == "__main__":
     peak_correlation_matrix, feature_matrix, edge_index = training_set[0]
 
     (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
-                X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
-                test_gene_correlation_matrix, test_peak_correlation_matrix,
-                test_feature_matrix, test_edge_index) = test_set
+     X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
+     test_gene_correlation_matrix, test_peak_correlation_matrix,
+     test_feature_matrix, test_edge_index) = test_set
 
-    # print(X_rna_tensor_normalized.device)
-    # print("=" * 30)
-    # print(X_atac_tensor_normalized.device)
-    # print("=" * 30)
-    # print(X_rna_tensor.device)
-    # print("=" * 30)
+    (total_X_rna_tensor, total_X_rna_tensor_normalized, total_X_atac_tensor,
+     total_X_atac_tensor_normalized, total_scRNA_anndata, total_scATAC_anndata,
+     total_gene_correlation_matrix, total_peak_correlation_matrix,
+     total_feature_matrix, total_edge_index) = total_training_set
+
+    print(total_X_rna_tensor_normalized.shape)
+    print("=" * 30)
+    print(X_rna_test_tensor_normalized.shape)
+    print("=" * 30)
+    print(X_rna_tensor_normalized.shape)
+    print("=" * 30)
     # print(X_atac_tensor.device)
     # print("=" * 30)
     # print(gene_correlation_matrix.device)
