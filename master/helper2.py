@@ -114,7 +114,8 @@ def calc_weight(
 
 def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, optimizer,
                     RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
-                    feature_matrix, edge_index, gene_gene, peak_peak, kl_weight, use_mlp):
+                    feature_matrix, edge_index, gene_gene, peak_peak, kl_weight, use_mlp,
+                    use_mask, mask1, mask2):
     encoder1.train()
     encoder2.train()
     gnn.train()
@@ -168,6 +169,10 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
         eta = mlp2(eta)
     pred_RNA_tensor = decoder1(theta1, rho)
     pred_ATAC_tensor = decoder2(theta2, eta)
+
+    if use_mask:
+        pred_RNA_tensor = pred_RNA_tensor * mask1
+        pred_ATAC_tensor = pred_ATAC_tensor * mask2
 
     """
     modify loss here
@@ -532,6 +537,11 @@ def process_data(rna_path, atac_path, device, num_of_cell,
            correlation_matrix_cleaned, correlation_matrix2_cleaned
 
 
+
+
+
+
+
 def prior_expert(size, use_cuda=False):
     mu = Variable(torch.zeros(size))
     logvar = Variable(torch.zeros(size))
@@ -551,7 +561,8 @@ def experts(mu, logsigma, eps=1e-8):
 
 def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimizer,
                         RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
-                        feature_matrix, edge_index, gene_gene, peak_peak, kl_weight, use_mlp):
+                        feature_matrix, edge_index, gene_gene, peak_peak, kl_weight, use_mlp,
+                        use_mask, mask1, mask2):
     encoder1.train()
     encoder2.train()
     gnn.train()
@@ -607,6 +618,9 @@ def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimi
         eta = mlp2(eta)
     pred_RNA_tensor, pred_ATAC_tensor = pog_decoder(Theta, rho, eta)
 
+    if use_mask:
+        pred_RNA_tensor = pred_RNA_tensor * mask1
+        pred_ATAC_tensor = pred_ATAC_tensor * mask2
     """
     modify loss here
     """
