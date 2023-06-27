@@ -149,17 +149,11 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
     # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
     eta, rho = split_tensor(new_emb, ATAC_tensor_normalized.shape[1])
 
-    pred_gene_gene = torch.mm(rho, rho.t())
-    nan_mask = torch.isnan(pred_gene_gene)
-    pred_gene_gene[nan_mask] = 1
-    pred_gene_gene = torch.log(pred_gene_gene + 1e-6)
+    pred_gene_gene = torch.sigmoid(torch.mm(rho, rho.t()))
     nan_mask = torch.isnan(pred_gene_gene)
     pred_gene_gene[nan_mask] = 1
 
-    pred_peak_peak = torch.mm(eta, eta.t())
-    nan_mask = torch.isnan(pred_peak_peak)
-    pred_peak_peak[nan_mask] = 1
-    pred_peak_peak = torch.log(pred_peak_peak + 1e-6)
+    pred_peak_peak = torch.sigmoid(torch.mm(eta, eta.t()))
     nan_mask = torch.isnan(pred_peak_peak)
     pred_peak_peak[nan_mask] = 1
 
@@ -599,17 +593,11 @@ def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimi
     # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
     eta, rho = split_tensor(new_emb, ATAC_tensor_normalized.shape[1])
 
-    pred_gene_gene = torch.mm(rho, rho.t())
-    nan_mask = torch.isnan(pred_gene_gene)
-    pred_gene_gene[nan_mask] = 1
-    pred_gene_gene = torch.log(pred_gene_gene + 1e-6)
+    pred_gene_gene = torch.sigmoid(torch.mm(rho, rho.t()))
     nan_mask = torch.isnan(pred_gene_gene)
     pred_gene_gene[nan_mask] = 1
 
-    pred_peak_peak = torch.mm(eta, eta.t())
-    nan_mask = torch.isnan(pred_peak_peak)
-    pred_peak_peak[nan_mask] = 1
-    pred_peak_peak = torch.log(pred_peak_peak + 1e-6)
+    pred_peak_peak = torch.sigmoid(torch.mm(eta, eta.t()))
     nan_mask = torch.isnan(pred_peak_peak)
     pred_peak_peak[nan_mask] = 1
 
