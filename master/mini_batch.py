@@ -10,6 +10,20 @@ import matplotlib.pyplot as plt
 import select_gpu
 
 
+def add_noise(arr, noise_rate):
+    shape = arr.shape
+    random_noise = torch.floor(torch.rand(shape) * 5)
+
+    prob = noise_rate
+    random_tensor = torch.rand(shape)
+    mask = torch.where(random_tensor < prob, torch.tensor(1), torch.tensor(0))
+
+    noise = random_noise * mask
+    noisy_arr = noise + arr
+
+    return noisy_arr
+
+
 def cal_cor(scRNA_adata_mini_batch, scATAC_adata_mini_batch, num_of_gene, num_of_peak, cor):
     # print("----------------------")
     # print("Compute gene-gene correlation")
@@ -152,7 +166,9 @@ def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata
 def process_mini_batch_data(rna_path, atac_path, device,
                             num_of_cell, num_of_gene, num_of_peak,
                             test_num_of_cell, batch_size, batch_num,
-                            emb_size, use_highly_variable, cor, use_mask, mask_ratio):
+                            emb_size, use_highly_variable, cor,
+                            use_mask=False, mask_ratio=0.2,
+                            use_noise=True, noise_ratio=0.2):
     print("======  start processing data  ======")
     feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
     training_set = []
@@ -222,6 +238,10 @@ def process_mini_batch_data(rna_path, atac_path, device,
         gene_expression = scRNA_adata_mini_batch.X[:num_of_cell, :num_of_gene]
         mask_matrix1 = np.random.choice([0, 1], size=gene_expression.shape, p=[mask_ratio, 1 - mask_ratio])
 
+        X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene]
+        X_rna_tensor_copy = torch.from_numpy(X_rna)
+        X_rna_tensor_copy = torch.tensor(X_rna_tensor_copy, dtype=torch.float32)
+
         if use_mask:
             X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene] * mask_matrix1
             mask_matrix1 = torch.from_numpy(mask_matrix1)
@@ -233,6 +253,10 @@ def process_mini_batch_data(rna_path, atac_path, device,
 
         X_rna_tensor = torch.from_numpy(X_rna)
         X_rna_tensor = torch.tensor(X_rna_tensor, dtype=torch.float32)
+
+        if use_noise:
+            X_rna_tensor = add_noise(X_rna_tensor, noise_ratio)
+
         sums_rna = X_rna_tensor.sum(1).unsqueeze(1)
         X_rna_tensor_normalized = X_rna_tensor / sums_rna
 
@@ -250,6 +274,10 @@ def process_mini_batch_data(rna_path, atac_path, device,
         peak_expression = scATAC_adata_mini_batch.X[:num_of_cell, :num_of_peak]
         mask_matrix2 = np.random.choice([0, 1], size=peak_expression.shape, p=[mask_ratio, 1 - mask_ratio])
 
+        X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak]
+        X_atac_tensor_copy = torch.from_numpy(X_atac)
+        X_atac_tensor_copy = torch.tensor(X_atac_tensor_copy, dtype=torch.float32)
+
         if use_mask:
             X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak] * mask_matrix2
             mask_matrix2 = torch.from_numpy(mask_matrix2)
@@ -261,6 +289,10 @@ def process_mini_batch_data(rna_path, atac_path, device,
 
         X_atac_tensor = torch.from_numpy(X_atac)
         X_atac_tensor = torch.tensor(X_atac_tensor, dtype=torch.float32)
+
+        if use_noise:
+            X_atac_tensor = add_noise(X_atac_tensor, noise_ratio)
+
         sums_atac = X_atac_tensor.sum(1).unsqueeze(1)
         X_atac_tensor_normalized = X_atac_tensor / sums_atac
 
@@ -284,10 +316,13 @@ def process_mini_batch_data(rna_path, atac_path, device,
         peak_correlation_matrix = peak_correlation_matrix.to(device)
         feature_matrix = feature_matrix.to(device)
         edge_index = edge_index.to(device)
+        X_rna_tensor_copy = X_rna_tensor_copy.to(device)
+        X_atac_tensor_copy = X_atac_tensor_copy.to(device)
 
         training_batch = (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
                           scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix,
-                          peak_correlation_matrix, feature_matrix, edge_index, mask_matrix1, mask_matrix2)
+                          peak_correlation_matrix, feature_matrix, edge_index, mask_matrix1, mask_matrix2,
+                          X_rna_tensor_copy, X_atac_tensor_copy)
 
         training_set.append(training_batch)
 
@@ -320,12 +355,14 @@ if __name__ == "__main__":
         emb_size=512,
         use_highly_variable=True,
         cor='pearson',
-        use_mask=False
+        use_mask=False,
+        mask_ratio=0.2,
     )
 
     X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized, \
     scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix, \
-    peak_correlation_matrix, feature_matrix, edge_index = training_set[0]
+    peak_correlation_matrix, feature_matrix, edge_index, mask_matrix1, mask_matrix2,\
+    X_rna_tensor_copy, X_atac_tensor_copy = training_set[0]
 
     (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
      X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,

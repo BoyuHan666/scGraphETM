@@ -1,6 +1,5 @@
 import torch
 from scipy import stats
-import scipy.sparse as sp
 from torch.nn import functional as F
 from sklearn.metrics import adjusted_rand_score
 from scipy.sparse import csr_matrix
@@ -9,28 +8,13 @@ import scanpy as sc
 import numpy as np
 import matplotlib.pyplot as plt
 import select_gpu
-import torch.distributions as dist
 
 
-def add_noise(arr, noise_rate):
-    shape = arr.shape
-    random_noise = torch.floor(torch.rand(shape) * 5)
-
-    prob = noise_rate
-    random_tensor = torch.rand(shape)
-    mask = torch.where(random_tensor < prob, torch.tensor(1), torch.tensor(0))
-
-    noise = random_noise * mask
-    noisy_arr = noise + arr
-
-    return noisy_arr
-
-
-def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
+def cal_cor(scRNA_adata_mini_batch, scATAC_adata_mini_batch, num_of_gene, num_of_peak, cor):
     # print("----------------------")
     # print("Compute gene-gene correlation")
     # print(type(scRNA_adata_mini_batch.X[:, :num_of_gene]))
-    gene_expression = scRNA_adata.X[:, :num_of_gene].toarray()
+    gene_expression = scRNA_adata_mini_batch.X[:, :num_of_gene].toarray()
     if cor == 'pearson':
         correlation_matrix = np.corrcoef(gene_expression + 1e-6, rowvar=False)
     if cor == 'spearman':
@@ -39,7 +23,7 @@ def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
 
     # print("----------------------")
     # print("Compute peak-peak correlation")
-    peak_expression = scATAC_adata.X[:, :num_of_peak].toarray()
+    peak_expression = scATAC_adata_mini_batch.X[:, :num_of_peak].toarray()
     if cor == 'pearson':
         correlation_matrix2 = np.corrcoef(peak_expression + 1e-6, rowvar=False)
     if cor == 'spearman':
@@ -48,25 +32,23 @@ def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
 
     gene_pos_dic = {}
     for i in range(num_of_gene):
-        gene_names = scRNA_adata.var_names[i]
-        chrom = scRNA_adata.var["chrom"][i]
-        chromStart = scRNA_adata.var["chromStart"][i]
-        chromEnd = scRNA_adata.var["chromEnd"][i]
+        gene_names = scRNA_adata_mini_batch.var_names[i]
+        chrom = scRNA_adata_mini_batch.var["chrom"][i]
+        chromStart = scRNA_adata_mini_batch.var["chromStart"][i]
+        chromEnd = scRNA_adata_mini_batch.var["chromEnd"][i]
         gene_pos_dic[gene_names] = [chrom, chromStart, chromEnd]
 
     peak_pos_dic = {}
     for i in range(num_of_peak):
-        peak_names = scATAC_adata.var_names[i]
-        chrom = scATAC_adata.var["chrom"][i]
-        chromStart = scATAC_adata.var["chromStart"][i]
-        chromEnd = scATAC_adata.var["chromEnd"][i]
+        peak_names = scATAC_adata_mini_batch.var_names[i]
+        chrom = scATAC_adata_mini_batch.var["chrom"][i]
+        chromStart = scATAC_adata_mini_batch.var["chromStart"][i]
+        chromEnd = scATAC_adata_mini_batch.var["chromEnd"][i]
         peak_pos_dic[peak_names] = [chrom, chromStart, chromEnd]
 
     # print("----------------------")
     # print("Compute correlation matrix")
     cor_mat = torch.zeros(num_of_peak + num_of_gene, num_of_peak + num_of_gene)
-    gene_cor_mat = torch.zeros(num_of_gene, num_of_gene)
-    peak_cor_mat = torch.zeros(num_of_peak, num_of_peak)
     # print(cor_mat.shape)
     for i, gene in enumerate(list(gene_pos_dic.keys())):
         for j, peak in enumerate(list(peak_pos_dic.keys())):
@@ -87,14 +69,12 @@ def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
             gen_cor = gene_correlation_matrix[i, j]
             if gen_cor > 0.6:
                 cor_mat[num_of_peak + i, num_of_peak + j] = 1
-                gene_cor_mat[i, j] = 1
 
     for i, peak in enumerate(list(peak_pos_dic.keys())):
         for j, peak in enumerate(list(peak_pos_dic.keys())):
             peak_cor = peak_correlation_matrix[i, j]
             if peak_cor > 0.6:
                 cor_mat[i, j] = 1
-                peak_cor_mat[i, j] = 1
     # print("finish cor_mat")
 
     sparse_cor_mat = csr_matrix(cor_mat.cpu())
@@ -103,18 +83,17 @@ def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
     gene_correlation_matrix = torch.tensor(gene_correlation_matrix, dtype=torch.float32)
     peak_correlation_matrix = torch.tensor(peak_correlation_matrix, dtype=torch.float32)
 
-    return gene_cor_mat, peak_cor_mat, edge_index
+    return gene_correlation_matrix, peak_correlation_matrix, edge_index
 
 
 def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata, cor, feature_matrix, device):
+    """
+   =====================================================================================
+   Generate: X_rna_test_tensor, X_rna_test_tensor_normalized, scRNA_test_anndata
+   =====================================================================================
+   """
     test_end = end
     test_start = start
-
-    """
-    =====================================================================================
-    Generate: X_rna_test_tensor, X_rna_test_tensor_normalized, scRNA_test_anndata
-    =====================================================================================
-    """
 
     scRNA_adata_test = scRNA_adata[test_start:test_end, :num_of_gene]
 
@@ -170,14 +149,13 @@ def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata
     return test_set
 
 
-def process_full_batch_data(rna_path, atac_path, device,
+def process_mini_batch_data(rna_path, atac_path, device,
                             num_of_cell, num_of_gene, num_of_peak,
-                            test_num_of_cell, emb_size,
-                            use_highly_variable, cor,
-                            use_mask=False, mask_ratio=0.2,
-                            use_noise=True, noise_ratio=0.2):
+                            test_num_of_cell, batch_size, batch_num,
+                            emb_size, use_highly_variable, cor, use_mask, mask_ratio):
     print("======  start processing data  ======")
     feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
+    training_set = []
 
     """
     =====================================================================================
@@ -218,7 +196,7 @@ def process_full_batch_data(rna_path, atac_path, device,
 
     test_set = get_val_data(
         start=num_of_cell,
-        end=num_of_cell + test_num_of_cell,
+        end=num_of_cell+test_num_of_cell,
         num_of_gene=num_of_gene,
         num_of_peak=num_of_peak,
         scRNA_adata=scRNA_adata,
@@ -228,105 +206,103 @@ def process_full_batch_data(rna_path, atac_path, device,
         device=device,
     )
 
-    # random mask
-    gene_expression = scRNA_adata.X[:num_of_cell, :num_of_gene]
-    mask_matrix1 = np.random.choice([0, 1], size=gene_expression.shape, p=[mask_ratio, 1 - mask_ratio])
+    for i in range(batch_num):
+        print(f"process batches [{i + 1} / {batch_num}]")
+        selected_cells = np.random.choice(num_of_cell, size=batch_size, replace=False)
+        # selected_cells = np.array(sorted(selected_cells))
 
-    peak_expression = scATAC_adata.X[:num_of_cell, :num_of_peak]
-    mask_matrix2 = np.random.choice([0, 1], size=peak_expression.shape, p=[mask_ratio, 1 - mask_ratio])
+        """
+        =====================================================================================
+        Generate: X_rna_tensor, X_rna_tensor_normalized, scRNA_mini_batch_anndata
+        =====================================================================================
+        """
+        scRNA_adata_mini_batch = scRNA_adata[:num_of_cell, :]
+        scRNA_adata_mini_batch = scRNA_adata_mini_batch[selected_cells, :]
 
-    """
-    =====================================================================================
-    Generate: X_rna_tensor, X_rna_tensor_normalized, scRNA_mini_batch_anndata
-    =====================================================================================
-    """
-    scRNA_adata_full_batch = scRNA_adata[:num_of_cell, :]
+        gene_expression = scRNA_adata_mini_batch.X[:num_of_cell, :num_of_gene]
+        mask_matrix1 = np.random.choice([0, 1], size=gene_expression.shape, p=[mask_ratio, 1 - mask_ratio])
 
-    X_rna = scRNA_adata_full_batch.X.toarray()[:num_of_cell, :num_of_gene]
-    X_rna_tensor_copy = torch.from_numpy(X_rna)
-    X_rna_tensor_copy = torch.tensor(X_rna_tensor_copy, dtype=torch.float32)
+        X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene]
+        X_rna_tensor_copy = torch.from_numpy(X_rna)
+        X_rna_tensor_copy = torch.tensor(X_rna_tensor_copy, dtype=torch.float32)
 
-    if use_mask:
-        X_rna = scRNA_adata_full_batch.X.toarray()[:num_of_cell, :num_of_gene] * mask_matrix1
-        mask_matrix1 = torch.from_numpy(mask_matrix1)
-        mask_matrix1 = torch.tensor(mask_matrix1, dtype=torch.float32)
-        mask_matrix1 = mask_matrix1.to(device)
-        # print(sum(mask_matrix1))
-    else:
-        X_rna = scRNA_adata_full_batch.X.toarray()[:num_of_cell, :num_of_gene]
+        if use_mask:
+            X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene] * mask_matrix1
+            mask_matrix1 = torch.from_numpy(mask_matrix1)
+            mask_matrix1 = torch.tensor(mask_matrix1, dtype=torch.float32)
+            mask_matrix1 = mask_matrix1.to(device)
+            # print(sum(mask_matrix1))
+        else:
+            X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene]
 
+        X_rna_tensor = torch.from_numpy(X_rna)
+        X_rna_tensor = torch.tensor(X_rna_tensor, dtype=torch.float32)
+        sums_rna = X_rna_tensor.sum(1).unsqueeze(1)
+        X_rna_tensor_normalized = X_rna_tensor / sums_rna
 
-    X_rna_tensor = torch.from_numpy(X_rna)
-    X_rna_tensor = torch.tensor(X_rna_tensor, dtype=torch.float32)
+        scRNA_mini_batch_anndata = anndata.AnnData(X=scRNA_adata_mini_batch.X[:num_of_cell, :num_of_gene].toarray())
+        scRNA_mini_batch_anndata.obs['Celltype'] = scRNA_adata_mini_batch.obs['cell_type'].values[:num_of_cell]
 
-    if use_noise:
-        X_rna_tensor = add_noise(X_rna_tensor, noise_ratio)
+        """
+        =====================================================================================
+        Generate: X_atac_tensor, X_atac_tensor_normalized, scATAC_mini_batch_anndata
+        =====================================================================================
+        """
+        scATAC_adata_mini_batch = scATAC_adata[:num_of_cell, :]
+        scATAC_adata_mini_batch = scATAC_adata_mini_batch[selected_cells, :]
 
-    sums_rna = X_rna_tensor.sum(1).unsqueeze(1)
-    X_rna_tensor_normalized = X_rna_tensor / sums_rna
+        peak_expression = scATAC_adata_mini_batch.X[:num_of_cell, :num_of_peak]
+        mask_matrix2 = np.random.choice([0, 1], size=peak_expression.shape, p=[mask_ratio, 1 - mask_ratio])
 
-    scRNA_mini_batch_anndata = anndata.AnnData(X=scRNA_adata_full_batch.X[:num_of_cell, :num_of_gene].toarray())
-    scRNA_mini_batch_anndata.obs['Celltype'] = scRNA_adata_full_batch.obs['cell_type'].values[:num_of_cell]
+        X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak]
+        X_atac_tensor_copy = torch.from_numpy(X_atac)
+        X_atac_tensor_copy = torch.tensor(X_atac_tensor_copy, dtype=torch.float32)
 
-    """
-    =====================================================================================
-    Generate: X_atac_tensor, X_atac_tensor_normalized, scATAC_mini_batch_anndata
-    =====================================================================================
-    """
+        if use_mask:
+            X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak] * mask_matrix2
+            mask_matrix2 = torch.from_numpy(mask_matrix2)
+            mask_matrix2 = torch.tensor(mask_matrix2, dtype=torch.float32)
+            mask_matrix2 = mask_matrix2.to(device)
+            # print(sum(mask_matrix2))
+        else:
+            X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak]
 
-    scATAC_adata_full_batch = scATAC_adata[:num_of_cell, :]
+        X_atac_tensor = torch.from_numpy(X_atac)
+        X_atac_tensor = torch.tensor(X_atac_tensor, dtype=torch.float32)
+        sums_atac = X_atac_tensor.sum(1).unsqueeze(1)
+        X_atac_tensor_normalized = X_atac_tensor / sums_atac
 
-    X_atac = scATAC_adata_full_batch.X.toarray()[:num_of_cell, :num_of_peak]
-    X_atac_tensor_copy = torch.from_numpy(X_atac)
-    X_atac_tensor_copy = torch.tensor(X_atac_tensor_copy, dtype=torch.float32)
+        scATAC_mini_batch_anndata = anndata.AnnData(X=scATAC_adata_mini_batch.X[:num_of_cell, :num_of_peak].toarray())
+        scATAC_mini_batch_anndata.obs['Celltype'] = scATAC_adata_mini_batch.obs['cell_type'].values[:num_of_cell]
 
-    if use_mask:
-        X_atac = scATAC_adata_full_batch.X.toarray()[:num_of_cell, :num_of_peak] * mask_matrix2
-        mask_matrix2 = torch.from_numpy(mask_matrix2)
-        mask_matrix2 = torch.tensor(mask_matrix2, dtype=torch.float32)
-        mask_matrix2 = mask_matrix2.to(device)
-        # print(sum(mask_matrix2))
-    else:
-        X_atac = scATAC_adata_full_batch.X.toarray()[:num_of_cell, :num_of_peak]
+        """
+        =====================================================================================
+        Generate: edge_index, gene_correlation_matrix, peak_correlation_matrix
+        =====================================================================================
+        """
+        gene_correlation_matrix, peak_correlation_matrix, edge_index = cal_cor(scRNA_adata_mini_batch,
+                                                                               scATAC_adata_mini_batch, num_of_gene,
+                                                                               num_of_peak, cor)
 
-    X_atac_tensor = torch.from_numpy(X_atac)
-    X_atac_tensor = torch.tensor(X_atac_tensor, dtype=torch.float32)
+        X_rna_tensor = X_rna_tensor.to(device)
+        X_rna_tensor_normalized = X_rna_tensor_normalized.to(device)
+        X_atac_tensor = X_atac_tensor.to(device)
+        X_atac_tensor_normalized = X_atac_tensor_normalized.to(device)
+        gene_correlation_matrix = gene_correlation_matrix.to(device)
+        peak_correlation_matrix = peak_correlation_matrix.to(device)
+        feature_matrix = feature_matrix.to(device)
+        edge_index = edge_index.to(device)
+        X_rna_tensor_copy = X_rna_tensor_copy.to(device)
+        X_atac_tensor_copy = X_atac_tensor_copy.to(device)
 
-    if use_noise:
-        X_atac_tensor = add_noise(X_atac_tensor, noise_ratio)
+        training_batch = (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
+                          scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix,
+                          peak_correlation_matrix, feature_matrix, edge_index, mask_matrix1, mask_matrix2,
+                          X_rna_tensor_copy, X_atac_tensor_copy)
 
-    sums_atac = X_atac_tensor.sum(1).unsqueeze(1)
-    X_atac_tensor_normalized = X_atac_tensor / sums_atac
+        training_set.append(training_batch)
 
-    scATAC_mini_batch_anndata = anndata.AnnData(X=scATAC_adata_full_batch.X[:num_of_cell, :num_of_peak].toarray())
-    scATAC_mini_batch_anndata.obs['Celltype'] = scATAC_adata_full_batch.obs['cell_type'].values[:num_of_cell]
-
-    """
-    =====================================================================================
-    Generate: edge_index, gene_correlation_matrix, peak_correlation_matrix
-    =====================================================================================
-    """
-    gene_correlation_matrix, peak_correlation_matrix, edge_index = cal_cor(scRNA_adata_full_batch,
-                                                                           scATAC_adata_full_batch,
-                                                                           num_of_gene,
-                                                                           num_of_peak, cor)
-
-    X_rna_tensor = X_rna_tensor.to(device)
-    X_rna_tensor_normalized = X_rna_tensor_normalized.to(device)
-    X_atac_tensor = X_atac_tensor.to(device)
-    X_atac_tensor_normalized = X_atac_tensor_normalized.to(device)
-    gene_correlation_matrix = gene_correlation_matrix.to(device)
-    peak_correlation_matrix = peak_correlation_matrix.to(device)
-    feature_matrix = feature_matrix.to(device)
-    edge_index = edge_index.to(device)
-    X_rna_tensor_copy = X_rna_tensor_copy.to(device)
-    X_atac_tensor_copy = X_atac_tensor_copy.to(device)
-
-    training_set = (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
-                    scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix,
-                    peak_correlation_matrix, feature_matrix, edge_index, X_rna_tensor_copy, X_atac_tensor_copy)
-
-    return training_set, total_training_set, test_set, scRNA_adata, scATAC_adata, mask_matrix1, mask_matrix2
+    return training_set, total_training_set, test_set, scRNA_adata, scATAC_adata
 
 
 if __name__ == "__main__":
@@ -342,29 +318,66 @@ if __name__ == "__main__":
     rna_path = "../data/10x-Multiome-Pbmc10k-RNA.h5ad"
     atac_path = "../data/10x-Multiome-Pbmc10k-ATAC.h5ad"
 
-    training_set, total_train_set, test_set, scRNA_adata, scATAC_adata, mask_matrix1, mask_matrix2 = process_full_batch_data(
+    training_set, total_training_set, test_set, scRNA_adata, scATAC_adata = process_mini_batch_data(
         rna_path=rna_path,
         atac_path=atac_path,
         device=device,
-        num_of_cell=2000,
+        num_of_cell=6000,
         num_of_gene=200,
         num_of_peak=200,
-        test_num_of_cell=1000,
+        test_num_of_cell=2000,
+        batch_size=400,
+        batch_num=2,
         emb_size=512,
         use_highly_variable=True,
         cor='pearson',
-        use_mask=True,
+        use_mask=False,
         mask_ratio=0.2,
     )
 
     X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized, \
     scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix, \
-    peak_correlation_matrix, feature_matrix, edge_index, X_rna_tensor_copy, X_atac_tensor_copy = training_set
+    peak_correlation_matrix, feature_matrix, edge_index, mask_matrix1, mask_matrix2,\
+    X_rna_tensor_copy, X_atac_tensor_copy = training_set[0]
 
     (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
      X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
      test_gene_correlation_matrix, test_peak_correlation_matrix,
      test_feature_matrix, test_edge_index) = test_set
 
-    print(gene_correlation_matrix)
-    print(peak_correlation_matrix)
+    (total_X_rna_tensor, total_X_rna_tensor_normalized, total_X_atac_tensor,
+     total_X_atac_tensor_normalized, total_scRNA_anndata, total_scATAC_anndata,
+     total_gene_correlation_matrix, total_peak_correlation_matrix,
+     total_feature_matrix, total_edge_index) = total_training_set
+
+    print(total_X_rna_tensor_normalized.shape)
+    print("=" * 30)
+    print(X_rna_test_tensor_normalized.shape)
+    print("=" * 30)
+    print(X_rna_tensor_normalized.shape)
+    print("=" * 30)
+    # print(X_atac_tensor.device)
+    # print("=" * 30)
+    # print(gene_correlation_matrix.device)
+    # print("=" * 30)
+    # print(peak_correlation_matrix.device)
+    # print("=" * 30)
+    # print(feature_matrix.device)
+    # print("=" * 30)
+    # print(edge_index.device)
+    #
+    # print(X_rna_test_tensor_normalized.device)
+    # print("=" * 30)
+    # print(X_atac_test_tensor_normalized.device)
+    # print("=" * 30)
+    # print(X_rna_test_tensor.device)
+    # print("=" * 30)
+    # print(X_atac_test_tensor.device)
+    # print("=" * 30)
+    # print(test_gene_correlation_matrix.device)
+    # print("=" * 30)
+    # print(test_peak_correlation_matrix.device)
+    # print("=" * 30)
+    # print(test_feature_matrix.device)
+    # print("=" * 30)
+    # print(test_edge_index.device)

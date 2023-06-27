@@ -9,21 +9,6 @@ import scanpy as sc
 import numpy as np
 import matplotlib.pyplot as plt
 import select_gpu
-import torch.distributions as dist
-
-
-def add_noise(arr, noise_rate):
-    shape = arr.shape
-    random_noise = torch.floor(torch.rand(shape) * 5)
-
-    prob = noise_rate
-    random_tensor = torch.rand(shape)
-    mask = torch.where(random_tensor < prob, torch.tensor(1), torch.tensor(0))
-
-    noise = random_noise * mask
-    noisy_arr = noise + arr
-
-    return noisy_arr
 
 
 def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
@@ -65,8 +50,6 @@ def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
     # print("----------------------")
     # print("Compute correlation matrix")
     cor_mat = torch.zeros(num_of_peak + num_of_gene, num_of_peak + num_of_gene)
-    gene_cor_mat = torch.zeros(num_of_gene, num_of_gene)
-    peak_cor_mat = torch.zeros(num_of_peak, num_of_peak)
     # print(cor_mat.shape)
     for i, gene in enumerate(list(gene_pos_dic.keys())):
         for j, peak in enumerate(list(peak_pos_dic.keys())):
@@ -87,14 +70,12 @@ def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
             gen_cor = gene_correlation_matrix[i, j]
             if gen_cor > 0.6:
                 cor_mat[num_of_peak + i, num_of_peak + j] = 1
-                gene_cor_mat[i, j] = 1
 
     for i, peak in enumerate(list(peak_pos_dic.keys())):
         for j, peak in enumerate(list(peak_pos_dic.keys())):
             peak_cor = peak_correlation_matrix[i, j]
             if peak_cor > 0.6:
                 cor_mat[i, j] = 1
-                peak_cor_mat[i, j] = 1
     # print("finish cor_mat")
 
     sparse_cor_mat = csr_matrix(cor_mat.cpu())
@@ -103,10 +84,11 @@ def cal_cor(scRNA_adata, scATAC_adata, num_of_gene, num_of_peak, cor):
     gene_correlation_matrix = torch.tensor(gene_correlation_matrix, dtype=torch.float32)
     peak_correlation_matrix = torch.tensor(peak_correlation_matrix, dtype=torch.float32)
 
-    return gene_cor_mat, peak_cor_mat, edge_index
+    return gene_correlation_matrix, peak_correlation_matrix, edge_index
 
 
 def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata, cor, feature_matrix, device):
+
     test_end = end
     test_start = start
 
@@ -173,9 +155,7 @@ def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata
 def process_full_batch_data(rna_path, atac_path, device,
                             num_of_cell, num_of_gene, num_of_peak,
                             test_num_of_cell, emb_size,
-                            use_highly_variable, cor,
-                            use_mask=False, mask_ratio=0.2,
-                            use_noise=True, noise_ratio=0.2):
+                            use_highly_variable, cor, use_mask, mask_ratio):
     print("======  start processing data  ======")
     feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
 
@@ -255,13 +235,8 @@ def process_full_batch_data(rna_path, atac_path, device,
     else:
         X_rna = scRNA_adata_full_batch.X.toarray()[:num_of_cell, :num_of_gene]
 
-
     X_rna_tensor = torch.from_numpy(X_rna)
     X_rna_tensor = torch.tensor(X_rna_tensor, dtype=torch.float32)
-
-    if use_noise:
-        X_rna_tensor = add_noise(X_rna_tensor, noise_ratio)
-
     sums_rna = X_rna_tensor.sum(1).unsqueeze(1)
     X_rna_tensor_normalized = X_rna_tensor / sums_rna
 
@@ -291,10 +266,6 @@ def process_full_batch_data(rna_path, atac_path, device,
 
     X_atac_tensor = torch.from_numpy(X_atac)
     X_atac_tensor = torch.tensor(X_atac_tensor, dtype=torch.float32)
-
-    if use_noise:
-        X_atac_tensor = add_noise(X_atac_tensor, noise_ratio)
-
     sums_atac = X_atac_tensor.sum(1).unsqueeze(1)
     X_atac_tensor_normalized = X_atac_tensor / sums_atac
 
@@ -366,5 +337,5 @@ if __name__ == "__main__":
      test_gene_correlation_matrix, test_peak_correlation_matrix,
      test_feature_matrix, test_edge_index) = test_set
 
-    print(gene_correlation_matrix)
-    print(peak_correlation_matrix)
+    print(X_rna_tensor_normalized.shape, X_atac_tensor_normalized.shape)
+    print(X_rna_test_tensor_normalized.shape, X_atac_test_tensor_normalized.shape)

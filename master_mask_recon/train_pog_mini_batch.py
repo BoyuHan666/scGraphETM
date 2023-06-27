@@ -20,8 +20,6 @@ def train(model_tuple, optimizer,
     best_train_theta = None
     best_beta_gene = None
     best_beta_peak = None
-    ari_trains = []
-    ari_tests = []
 
     (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
      X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
@@ -33,8 +31,8 @@ def train(model_tuple, optimizer,
      total_gene_correlation_matrix, total_peak_correlation_matrix,
      total_feature_matrix, total_edge_index) = total_training_set
 
-    print(f"val set tensor dim: {X_rna_test_tensor_normalized.shape}, {X_atac_test_tensor_normalized.shape}")
-    print(f"train set tensor dim: {total_X_rna_tensor_normalized.shape}, {total_X_atac_tensor_normalized.shape}")
+    print(f"val set tensor dim: {X_rna_test_tensor_normalized.shape}")
+    print(f"train set tensor dim: {total_X_rna_tensor_normalized.shape}")
 
     (encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder) = model_tuple
 
@@ -78,9 +76,6 @@ def train(model_tuple, optimizer,
             res, ari, nmi = helper2.evaluate_ari2(theta.to('cpu'), scRNA_test_anndata)
             res_train, ari_train, nmi_train = helper2.evaluate_ari2(theta_train.to('cpu'), total_scRNA_anndata)
 
-            ari_trains.append(ari_train)
-            ari_tests.append(ari)
-
             print('====  Iter: {},  NELBO: {:.4f}  ====\n'
                   'Train res: {}\t Train ARI: {:.4f}\t Train NMI: {:.4f}\n'
                   'Valid res: {}\t Valid ARI: {:.4f}\t Valid NMI: {:.4f}\n'
@@ -104,7 +99,7 @@ def train(model_tuple, optimizer,
 
     return (encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder,
             best_ari, best_theta, best_beta_gene, best_beta_peak,
-            best_train_ari, best_train_theta, ari_trains, ari_tests)
+            best_train_ari, best_train_theta)
 
 
 if __name__ == "__main__":
@@ -116,10 +111,10 @@ if __name__ == "__main__":
     num_of_peak = 2000
     test_num_of_cell = 2000
     batch_size = 2000
-    batch_num = 10
+    batch_num = 3
     emb_size = 512
     emb_size2 = 512
-    num_of_topic = 40
+    num_of_topic = 20
     gnn_conv = 'GATv2'
     num_epochs = 500
     ari_freq = 10
@@ -128,7 +123,7 @@ if __name__ == "__main__":
     lr = 0.001
     use_mlp = False
     use_mask_train = True
-    use_mask_reconstruct = True  # False: one side mask for reconstructing the masked expressions
+    use_mask_reconstruct = False  # False: one side mask for reconstructing the masked expressions
     mask_ratio = 0.2
 
     if torch.cuda.is_available():
@@ -182,7 +177,7 @@ if __name__ == "__main__":
     st = time.time()
     (encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder,
      best_ari, best_theta, best_beta_gene, best_beta_peak,
-     best_train_ari, best_train_theta, ari_trains, ari_tests) = train(
+     best_train_ari, best_train_theta) = train(
         model_tuple=model_tuple,
         optimizer=optimizer,
         train_set=training_set,
@@ -198,12 +193,9 @@ if __name__ == "__main__":
     print(f"training time: {ed - st}")
 
     print(f"best_train_ari: {best_train_ari}, best_val_ari: {best_ari}")
-    print(ari_trains)
-    print(ari_tests)
     print("=========  generate_clustermap  =========")
     (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
      X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
      test_gene_correlation_matrix, test_peak_correlation_matrix,
      test_feature_matrix, test_edge_index) = test_set
     view_result.generate_clustermap(best_theta, scRNA_test_anndata, plot_path_rel)
-
