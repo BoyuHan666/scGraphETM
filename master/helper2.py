@@ -115,7 +115,7 @@ def calc_weight(
 def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, optimizer,
                     RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
                     feature_matrix, edge_index, gene_gene, peak_peak, kl_weight, use_mlp,
-                    use_mask, mask1, mask2):
+                    use_mask, mask1, mask2, RNA_tensor_copy, ATAC_tensor_copy):
     encoder1.train()
     encoder2.train()
     gnn.train()
@@ -170,16 +170,21 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
     pred_RNA_tensor = decoder1(theta1, rho)
     pred_ATAC_tensor = decoder2(theta2, eta)
 
-    if use_mask:
+    if use_mask:  # double side mask
         pred_RNA_tensor = pred_RNA_tensor * mask1
         pred_ATAC_tensor = pred_ATAC_tensor * mask2
+        X_RNA = RNA_tensor  # masked
+        X_ATAC = ATAC_tensor  # masked
+    else:  # one side mask for reconstructing the masked expressions
+        X_RNA = RNA_tensor_copy  # no masked
+        X_ATAC = ATAC_tensor_copy  # no masked
 
     """
     modify loss here
     """
 
-    recon_loss1 = -(pred_RNA_tensor * RNA_tensor).sum(-1)
-    recon_loss2 = -(pred_ATAC_tensor * ATAC_tensor).sum(-1)
+    recon_loss1 = -(pred_RNA_tensor * X_RNA).sum(-1)
+    recon_loss2 = -(pred_ATAC_tensor * X_ATAC).sum(-1)
 
     recon_loss3 = -(pred_gene_gene * gene_gene).sum(-1)
     recon_loss4 = -(pred_peak_peak * peak_peak).sum(-1)
@@ -537,11 +542,6 @@ def process_data(rna_path, atac_path, device, num_of_cell,
            correlation_matrix_cleaned, correlation_matrix2_cleaned
 
 
-
-
-
-
-
 def prior_expert(size, use_cuda=False):
     mu = Variable(torch.zeros(size))
     logvar = Variable(torch.zeros(size))
@@ -562,7 +562,7 @@ def experts(mu, logsigma, eps=1e-8):
 def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimizer,
                         RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
                         feature_matrix, edge_index, gene_gene, peak_peak, kl_weight, use_mlp,
-                        use_mask, mask1, mask2):
+                        use_mask, mask1, mask2, RNA_tensor_copy, ATAC_tensor_copy):
     encoder1.train()
     encoder2.train()
     gnn.train()
@@ -618,15 +618,21 @@ def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimi
         eta = mlp2(eta)
     pred_RNA_tensor, pred_ATAC_tensor = pog_decoder(Theta, rho, eta)
 
-    if use_mask:
+    if use_mask:  # double side mask
         pred_RNA_tensor = pred_RNA_tensor * mask1
         pred_ATAC_tensor = pred_ATAC_tensor * mask2
+        X_RNA = RNA_tensor  # masked
+        X_ATAC = ATAC_tensor  # masked
+    else:  # one side mask for reconstructing the masked expressions
+        X_RNA = RNA_tensor_copy  # no masked
+        X_ATAC = ATAC_tensor_copy  # no masked
+
     """
     modify loss here
     """
 
-    recon_loss1 = -(pred_RNA_tensor * RNA_tensor).sum(-1)
-    recon_loss2 = -(pred_ATAC_tensor * ATAC_tensor).sum(-1)
+    recon_loss1 = -(pred_RNA_tensor * X_RNA).sum(-1)
+    recon_loss2 = -(pred_ATAC_tensor * X_ATAC).sum(-1)
 
     recon_loss3 = -(pred_gene_gene * gene_gene).sum(-1)
     recon_loss4 = -(pred_peak_peak * peak_peak).sum(-1)
