@@ -130,6 +130,8 @@ if __name__ == "__main__":
     use_mask_train = True
     use_mask_reconstruct = True  # False: one side mask for reconstructing the masked expressions
     mask_ratio = 0.2
+    use_noise = True
+    noise_ratio = 0.2
 
     if torch.cuda.is_available():
         print("=======  GPU device found  =======")
@@ -155,6 +157,8 @@ if __name__ == "__main__":
         cor='pearson',
         use_mask=use_mask_train,
         mask_ratio=mask_ratio,
+        use_noise=use_noise,
+        noise_ratio=noise_ratio
     )
 
     encoder1 = model2.VAE(num_of_gene, emb_size, num_of_topic).to(device)

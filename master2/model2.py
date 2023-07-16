@@ -88,8 +88,8 @@ class VAE(nn.Module):
             nn.Dropout(p=0.1)
         )
 
-        self.mu = nn.Linear(emb_size, num_topics, bias=True)
-        self.log_sigma = nn.Linear(emb_size, num_topics, bias=True)
+        self.mu = nn.Linear(emb_size, num_topics, bias=False)
+        self.log_sigma = nn.Linear(emb_size, num_topics, bias=False)
 
     def forward(self, x):
         h = self.mlp(x)
@@ -101,6 +101,9 @@ class VAE(nn.Module):
 
         kl_theta = -0.5 * torch.sum(1 + log_sigma - mu.pow(2) - log_sigma.exp(), dim=-1).mean()
 
+        # print(f"h:\n {h}")
+        # print(f"mu:\n {mu}")
+        # print(f"log_sigma:\n {log_sigma}")
         return mu, log_sigma, kl_theta
 
 
@@ -129,6 +132,7 @@ class LDEC(nn.Module):
         self.beta = beta
         res = torch.mm(theta, beta)
         preds = torch.log(res + 1e-6)
+
         batch_bias = F.log_softmax(self.batch_bias, dim=-1)
         # preds += batch_bias
         return preds

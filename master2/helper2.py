@@ -2,7 +2,9 @@ import torch
 from scipy import stats
 from torch.nn import functional as F
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+from sklearn.cluster import KMeans, SpectralClustering, DBSCAN
 from torch.autograd import Variable
+
 
 import anndata as ad
 import scanpy as sc
@@ -14,6 +16,22 @@ import matplotlib.pyplot as plt
 New Helper
 ==============================================================================
 """
+
+
+def get_pred_cor(RNA_data, ATAC_data):
+    device = RNA_data.device
+    gene_expression = RNA_data.cpu().detach().numpy()
+    correlation_matrix = np.corrcoef(gene_expression + 1e-6, rowvar=False)
+    gene_correlation_matrix = np.nan_to_num(correlation_matrix, nan=0, posinf=1, neginf=-1)
+
+    peak_expression = ATAC_data.cpu().detach().numpy()
+    correlation_matrix2 = np.corrcoef(peak_expression + 1e-6, rowvar=False)
+    peak_correlation_matrix = np.nan_to_num(correlation_matrix2, nan=0, posinf=1, neginf=-1)
+
+    gene_correlation_matrix = torch.tensor(gene_correlation_matrix, dtype=torch.float32)
+    peak_correlation_matrix = torch.tensor(peak_correlation_matrix, dtype=torch.float32)
+
+    return gene_correlation_matrix.to(device), peak_correlation_matrix.to(device)
 
 
 def evaluate_ari(cell_embed, adata):
@@ -34,21 +52,25 @@ def evaluate_ari(cell_embed, adata):
 def evaluate_ari2(cell_embed, adata):
     adata.obsm['cell_embed'] = cell_embed
     clustering_func, best_clustering_method, best_n_neighbor = None, None, None
-    clustering_methods = ["louvain"]
+    clustering_methods = ["leiden"]
     best_resolution, best_ari, best_nmi = 0, 0, 0
-    # resolutions = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64]
-    resolutions = [0.15]
-    n_neighbors = [30]
+    # resolutions = [0.15]
+    # n_neighbors = [30]
+    resolutions = [0.15, 0.16, 0.17, 0.18, 0.19, 0.20]
+    n_neighbors = [30, 35, 40, 45, 50, 55, 60]
     for n_neighbor in n_neighbors:
         sc.pp.neighbors(adata, use_rep="cell_embed", n_neighbors=n_neighbor)
-
         for clustering_method in clustering_methods:
             if clustering_method == 'louvain':
                 clustering_func = sc.tl.louvain
 
+            if clustering_method == 'leiden':
+                clustering_func = sc.tl.leiden
+
             for resolution in resolutions:
-                col = f'{clustering_method}_{resolution}'
-                clustering_func(adata, resolution=resolution, key_added=col)
+                col = f'{clustering_method}'
+                if clustering_func is not None:
+                    clustering_func(adata, resolution=resolution, key_added=col)
                 ari = adjusted_rand_score(adata.obs['Celltype'], adata.obs[col])
                 nmi = normalized_mutual_info_score(adata.obs['Celltype'], adata.obs[col])
                 if ari > best_ari:
@@ -125,6 +147,7 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
     decoder2.train()
 
     optimizer.zero_grad()
+    # torch.autograd.set_detect_anomaly(True)
 
     encoder1.zero_grad()
     encoder2.zero_grad()
@@ -143,25 +166,14 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
     z2 = reparameterize(mu2, log_sigma2)
     theta2 = F.softmax(z2, dim=-1)
 
+    # print(f"theta1:\n {theta1}")
+    # print(f"theta2:\n {theta2}")
+
     emb = gnn(feature_matrix, edge_index)
-    new_emb = mlp1(emb)
+    emb = mlp1(emb)
     # num_of_peak x emb, num_of_gene x emb
     # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
-    eta, rho = split_tensor(new_emb, ATAC_tensor_normalized.shape[1])
-
-    pred_gene_gene = torch.mm(rho, rho.t())
-    nan_mask = torch.isnan(pred_gene_gene)
-    pred_gene_gene[nan_mask] = 1
-    pred_gene_gene = torch.log(pred_gene_gene + 1e-6)
-    nan_mask = torch.isnan(pred_gene_gene)
-    pred_gene_gene[nan_mask] = 1
-
-    pred_peak_peak = torch.mm(eta, eta.t())
-    nan_mask = torch.isnan(pred_peak_peak)
-    pred_peak_peak[nan_mask] = 1
-    pred_peak_peak = torch.log(pred_peak_peak + 1e-6)
-    nan_mask = torch.isnan(pred_peak_peak)
-    pred_peak_peak[nan_mask] = 1
+    eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
 
     if use_mlp:
         # print("using mlp")
@@ -169,6 +181,9 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
         eta = mlp2(eta)
     pred_RNA_tensor = decoder1(theta1, rho)
     pred_ATAC_tensor = decoder2(theta2, eta)
+
+    # pred_RNA_tensor = decoder1(theta1)
+    # pred_ATAC_tensor = decoder2(theta2)
 
     if use_mask:  # double side mask
         pred_RNA_tensor = pred_RNA_tensor * mask1
@@ -185,16 +200,9 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
 
     recon_loss1 = -(pred_RNA_tensor * X_RNA).sum(-1)
     recon_loss2 = -(pred_ATAC_tensor * X_ATAC).sum(-1)
-
-    recon_loss3 = -(pred_gene_gene * gene_gene).sum(-1)
-    recon_loss4 = -(pred_peak_peak * peak_peak).sum(-1)
-
-    # print(f"recon_loss3: {recon_loss3.mean()}")
-    # print(f"recon_loss4: {recon_loss4.mean()}")
-
     recon_loss = (recon_loss1 + recon_loss2).mean()
-    # recon_loss += (recon_loss3 + recon_loss4).mean()
     kl_loss = kl_theta1 + kl_theta2
+    # kl_loss *= 10
 
     # loss = recon_loss + kl_loss * kl_weight
     loss = recon_loss + kl_loss
@@ -581,8 +589,8 @@ def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimi
 
     mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
     mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
-    mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
 
+    # mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
     # Mu = torch.cat((mu_prior, mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
     # Log_sigma = torch.cat((logsigma_prior, log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
 
@@ -594,22 +602,16 @@ def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimi
     Theta = F.softmax(reparameterize(mu, log_sigma), dim=-1)
 
     emb = gnn(feature_matrix, edge_index)
-    new_emb = mlp1(emb)
+    emb = mlp1(emb)
     # num_of_peak x emb, num_of_gene x emb
     # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
-    eta, rho = split_tensor(new_emb, ATAC_tensor_normalized.shape[1])
+    eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
 
-    pred_gene_gene = torch.mm(rho, rho.t())
-    nan_mask = torch.isnan(pred_gene_gene)
-    pred_gene_gene[nan_mask] = 1
-    pred_gene_gene = torch.log(pred_gene_gene + 1e-6)
+    pred_gene_gene = torch.sigmoid(torch.mm(rho, rho.t()))
     nan_mask = torch.isnan(pred_gene_gene)
     pred_gene_gene[nan_mask] = 1
 
-    pred_peak_peak = torch.mm(eta, eta.t())
-    nan_mask = torch.isnan(pred_peak_peak)
-    pred_peak_peak[nan_mask] = 1
-    pred_peak_peak = torch.log(pred_peak_peak + 1e-6)
+    pred_peak_peak = torch.sigmoid(torch.mm(eta, eta.t()))
     nan_mask = torch.isnan(pred_peak_peak)
     pred_peak_peak[nan_mask] = 1
 
@@ -617,6 +619,7 @@ def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimi
         rho = mlp1(rho)
         eta = mlp2(eta)
     pred_RNA_tensor, pred_ATAC_tensor = pog_decoder(Theta, rho, eta)
+    # pred_RNA_tensor, pred_ATAC_tensor = pog_decoder(Theta)
 
     if use_mask:  # double side mask
         pred_RNA_tensor = pred_RNA_tensor * mask1
@@ -633,22 +636,15 @@ def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimi
 
     recon_loss1 = -(pred_RNA_tensor * X_RNA).sum(-1)
     recon_loss2 = -(pred_ATAC_tensor * X_ATAC).sum(-1)
-
-    recon_loss3 = -(pred_gene_gene * gene_gene).sum(-1)
-    recon_loss4 = -(pred_peak_peak * peak_peak).sum(-1)
-
-    # print(f"recon_loss3: {recon_loss3.mean()}")
-    # print(f"recon_loss4: {recon_loss4.mean()}")
-
     recon_loss = (recon_loss1 + recon_loss2).mean()
-    # recon_loss += (recon_loss3 + recon_loss4).mean()
     kl_loss = kl_theta1 + kl_theta2
+    # kl_loss *= 10
 
     # loss = recon_loss + kl_loss * kl_weight
     loss = recon_loss + kl_loss
     loss.backward()
 
-    clamp_num = 2.0
+    clamp_num = 50.0
     torch.nn.utils.clip_grad_norm_(encoder1.parameters(), clamp_num)
     torch.nn.utils.clip_grad_norm_(encoder2.parameters(), clamp_num)
     torch.nn.utils.clip_grad_norm_(gnn.parameters(), clamp_num)
@@ -674,8 +670,7 @@ def get_theta_GNN_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, RNA_tens
         mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
         mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
 
-        mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
-
+        # mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
         # Mu = torch.cat((mu_prior, mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
         # Log_sigma = torch.cat((logsigma_prior, log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
 
@@ -715,8 +710,7 @@ def get_beta_GNN_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder,
         mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
         mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
 
-        mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
-
+        # mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
         # Mu = torch.cat((mu_prior, mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
         # Log_sigma = torch.cat((logsigma_prior, log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
 
