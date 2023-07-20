@@ -65,8 +65,7 @@ def train(model_tuple, optimizer,
         kl_weight = helper2.calc_weight(i, niter, 0, 1 / 3, 1e-2, 4)
         for train_batch in train_set:
             (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
-             scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix,
-             peak_correlation_matrix, feature_matrix, edge_index,
+             scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, feature_matrix, edge_index,
              mask_matrix1, mask_matrix2, X_rna_tensor_copy, X_atac_tensor_copy) = train_batch
 
             NELBO = helper2.train_one_epoch_pog(
@@ -149,10 +148,10 @@ if __name__ == "__main__":
     warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
 
     num_of_cell = 8000
-    # num_of_gene = 3000
-    num_of_gene = total_gene_num
-    # num_of_peak = 8000
-    num_of_peak = total_peak_num - 50000
+    num_of_gene = 3000
+    num_of_peak = 8000
+    # num_of_gene = total_gene_num
+    # num_of_peak = total_peak_num - 50000
     test_num_of_cell = total_cell_num - num_of_cell
     batch_num = 10
     batch_size = int(num_of_cell / batch_num)
@@ -178,6 +177,9 @@ if __name__ == "__main__":
         num_peak=num_of_peak,
         total_peak=total_peak_num
     )
+
+    print(result.shape)
+    print(result.sum())
 
     if torch.cuda.is_available():
         print("=======  GPU device found  =======")
