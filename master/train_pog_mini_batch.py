@@ -14,20 +14,26 @@ import model2
 import view_result
 
 from scipy.sparse import vstack, hstack
+from scipy.sparse import csr_matrix
 
 
 def get_sub_graph(path, num_gene, num_peak, total_peak):
-    with open(path, 'rb') as fp:
-        sp_matrix = pickle.load(fp)
-    peak_peak = sp_matrix[:num_peak, :num_peak]
-    peak_gene_down = sp_matrix[total_peak:(total_peak + num_gene), :num_peak]
-    peak_gene_up = sp_matrix[:num_peak, total_peak:(total_peak + num_gene)]
-    gene_gene = sp_matrix[total_peak:total_peak + num_gene, total_peak:total_peak + num_gene]
+    if path == '':
+        result = torch.zeros(num_of_peak + num_of_gene, num_of_peak + num_of_gene)
+        result = csr_matrix(result.cpu())
+    else:
+        with open(path, 'rb') as fp:
+            sp_matrix = pickle.load(fp)
+        peak_peak = sp_matrix[:num_peak, :num_peak]
+        peak_gene_down = sp_matrix[total_peak:(total_peak + num_gene), :num_peak]
+        peak_gene_up = sp_matrix[:num_peak, total_peak:(total_peak + num_gene)]
+        gene_gene = sp_matrix[total_peak:total_peak + num_gene, total_peak:total_peak + num_gene]
 
-    top = hstack([peak_peak, peak_gene_up])
-    bottom = hstack([peak_gene_down, gene_gene])
+        top = hstack([peak_peak, peak_gene_up])
+        bottom = hstack([peak_gene_down, gene_gene])
 
-    result = vstack([top, bottom])
+        result = vstack([top, bottom])
+
     rows, cols = result.nonzero()
     edge_index = torch.tensor(np.array([rows, cols]), dtype=torch.long)
 
