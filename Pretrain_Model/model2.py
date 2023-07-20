@@ -119,14 +119,14 @@ class InnerProductDecoder(nn.Module):
         self.dropout = dropout
         self.act = act
 
-    def forward_all(self, z, edge_index, sigmoid=True):
+    def forward(self, z, edge_index, sigmoid=True):
         r"""Decodes the latent variables :obj:`z` into edge probabilities for
         the given node-pairs :obj:`edge_index`.
         """
         value = (z[edge_index[0]] * z[edge_index[1]]).sum(dim=1)
         return torch.sigmoid(value) if sigmoid else value
 
-    def forward(self, z, edge_index, sigmoid=True):
+    def forward_all(self, z, edge_index, sigmoid=True):
         z = F.dropout(z, self.dropout, training=self.training)
         adj = self.act(torch.mm(z, z.t()))
         return adj

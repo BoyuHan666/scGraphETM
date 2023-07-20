@@ -1,81 +1,38 @@
-import numpy as np
-import torch
-from torch import optim
-from torch.optim.lr_scheduler import StepLR
-import time
+import scipy.sparse as sp
+import anndata
+import pickle
 
-import select_gpu
-import full_batch
-import helper2
-import model2
-import view_result
+pickle_file_path = '/home/vickarry/projects/ctb-liyue/vickarry/data/tf_gene.pickle'
 
-#
-# # Assuming you have two matrices called matrix1 and matrix2
-# matrix1 = np.array([[1, 2, 3],
-#                     [4, 5, 6],
-#                     [7, 8, 9]])
-# matrix2 = np.array([[2, 4, 6],
-#                     [8, 10, 12],
-#                     [14, 16, 18],
-#                     [14, 16, 18]])
-#
-# # Calculate the correlation matrix
-# correlation_matrix = np.zeros((matrix1.shape[0], matrix2.shape[0]))
-#
-# for i in range(matrix1.shape[0]):
-#     for j in range(matrix2.shape[0]):
-#         coef = np.corrcoef(matrix1[i], matrix2[j], rowvar=False)[0][1]
-#         correlation_matrix[i,j] = coef
-#
+with open(pickle_file_path, "rb") as file:
+    tf_gene = pickle.load(file)
 
-# Print the correlation matrix
-# print(correlation_matrix)
 
-if __name__ == "__main__":
+top1 = '/home/vickarry/projects/ctb-liyue/vickarry/data/top1peak_gene_relation.npz'
+peak_gene_top1 = sp.load_npz(top1)
+correlation1 = peak_gene_top1 + tf_gene
+file_path = 'top1_peak_tf_gene.pickle'
+with open(file_path, 'wb') as file:
+    pickle.dump(correlation1, file)
 
-    rna_path = "../data/10x-Multiome-Pbmc10k-RNA.h5ad"
-    atac_path = "../data/10x-Multiome-Pbmc10k-ATAC.h5ad"
+top3 = '/home/vickarry/projects/ctb-liyue/vickarry/data/top3peak_gene_relation.npz'
+peak_gene_top3 = sp.load_npz(top3)
+correlation2 = peak_gene_top3 + tf_gene
+file_path = 'top3_peak_tf_gene.pickle'
+with open(file_path, 'wb') as file:
+    pickle.dump(correlation2, file)
 
-    num_of_cell = 6000
-    num_of_gene = 2000
-    num_of_peak = 2000
-    title = 'Full_' + str(num_of_peak)
-    test_num_of_cell = 2000
-    emb_size = 512
-    emb_size2 = 512
-    num_of_topic = 40
-    gnn_conv = 'GATv2'
-    num_epochs = 2000
-    ari_freq = 40
-    plot_path_rel = "./plot/"
-    metric = 'theta'  # mu or theta
-    lr = 0.001
-    use_mlp = False
-    use_mask_train = False
-    use_mask_reconstruct = False  # False: one side mask for reconstructing the masked expressions
-    mask_ratio = 0.2
+top5 = '/home/vickarry/projects/ctb-liyue/vickarry/data/top5peak_gene_relation.npz'
+peak_gene_top5 = sp.load_npz(top5)
+correlation3 = peak_gene_top5 + tf_gene
+file_path = 'top5_peak_tf_gene.pickle'
+with open(file_path, 'wb') as file:
+    pickle.dump(correlation3, file)
 
-    if torch.cuda.is_available():
-        print("=======  GPU device found  =======")
-        selected_gpu = select_gpu.get_lowest_usage_gpu_index()
-        torch.cuda.set_device(selected_gpu)
-        device = torch.device("cuda:{}".format(selected_gpu))
-    else:
-        device = torch.device("cpu")
-        print("=======  No GPU found  =======")
+top5_2000 = '/home/vickarry/projects/ctb-liyue/vickarry/data/2000bp_top5peak_gene_relation.npz'
+peak_gene_2000 = sp.load_npz(top5_2000)
+correlation4 = peak_gene_2000 + tf_gene
+file_path = '2000bp_top5_peak_tf_gene.pickle'
+with open(file_path, 'wb') as file:
+    pickle.dump(correlation4, file)
 
-    training_set, total_training_set, test_set, scRNA_adata, scATAC_adata, mask_matrix1, mask_matrix2 = full_batch.process_full_batch_data(
-        rna_path=rna_path,
-        atac_path=atac_path,
-        device=device,
-        num_of_cell=num_of_cell,
-        num_of_gene=num_of_gene,
-        num_of_peak=num_of_peak,
-        test_num_of_cell=test_num_of_cell,
-        emb_size=emb_size,
-        use_highly_variable=True,
-        cor='pearson',
-        use_mask=use_mask_train,
-        mask_ratio=mask_ratio
-    )
