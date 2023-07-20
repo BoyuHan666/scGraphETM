@@ -80,6 +80,11 @@ def train(model_tuple, optimizer1, optimizer2,
             #
             # print('Iter: {} ..  NELBO: {:.4f} .. Train ARI: {:.4f} .. Val ARI: {:.4f}'.format(i, NELBO, ari_train, ari))
 
+            zero_tensor = torch.tensor(0.0)
+            zero_tensor = zero_tensor.to(theta.device)
+            theta = torch.where(torch.isnan(theta), zero_tensor, theta)
+            theta_train = torch.where(torch.isnan(theta_train), zero_tensor, theta_train)
+
             res, ari, nmi = helper2.evaluate_ari2(theta.to('cpu'), scRNA_test_anndata)
             res_train, ari_train, nmi_train = helper2.evaluate_ari2(theta_train.to('cpu'), total_scRNA_anndata)
 
@@ -113,28 +118,36 @@ def train(model_tuple, optimizer1, optimizer2,
 
 
 if __name__ == "__main__":
-
+    # BMMC_atac.h5ad BMMC_rna.h5ad
     rna_path = "../data/10x-Multiome-Pbmc10k-RNA.h5ad"
     atac_path = "../data/10x-Multiome-Pbmc10k-ATAC.h5ad"
+
+    # rna_path = "../data/BMMC_rna_filtered.h5ad"
+    # atac_path = "../data/BMMC_atac_filtered.h5ad"
+
+    # rna_path = "../data/Mouse_kidney_rna_filtered.h5ad"
+    # atac_path = "../data/Mouse_kidney_atac_filtered.h5ad"
+    print(f"======  fetching data from '{rna_path}' and '{atac_path}'  ======")
     num_of_cell = 2000
     num_of_gene = 2000
-    num_of_peak = 8000
+    num_of_peak = 2000
     test_num_of_cell = 2000
     emb_size = 512
     emb_size2 = 512
-    num_of_topic = 40
+    num_of_topic = 60
     gnn_conv = 'GATv2'
     num_epochs = 2000
     ari_freq = 100
     plot_path_rel = "./plot/"
     metric = 'theta'  # mu or theta
     lr = 0.001
+    use_highly_variable = True
     use_mlp = False
     use_mask_train = False
     use_mask_reconstruct = False  # False: one side mask for reconstructing the masked expressions
     mask_ratio = 0.2
-    use_noise = True
-    noise_ratio = 0.2
+    use_noise = False
+    noise_ratio = 0.15
 
     if torch.cuda.is_available():
         print("=======  GPU device found  =======")
@@ -154,7 +167,7 @@ if __name__ == "__main__":
         num_of_peak=num_of_peak,
         test_num_of_cell=test_num_of_cell,
         emb_size=emb_size,
-        use_highly_variable=True,
+        use_highly_variable=use_highly_variable,
         cor='pearson',
         use_mask=use_mask_train,
         mask_ratio=mask_ratio,
@@ -219,6 +232,3 @@ if __name__ == "__main__":
      test_gene_correlation_matrix, test_peak_correlation_matrix,
      test_feature_matrix, test_edge_index) = test_set
     view_result.generate_clustermap(best_theta, scRNA_test_anndata, plot_path_rel)
-
-    print(ari_trains)
-    print(ari_tests)
