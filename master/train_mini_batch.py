@@ -1,13 +1,36 @@
 import torch
 from torch import optim
 import time
+import warnings
+from numba.core.errors import NumbaDeprecationWarning
+import numpy as np
+import pickle
+import anndata
 
 import select_gpu
 import mini_batch
 import helper2
 import model2
 import view_result
+from scipy.sparse import vstack, hstack
 
+
+def get_sub_graph(path, num_gene, num_peak, total_peak):
+    with open(path, 'rb') as fp:
+        sp_matrix = pickle.load(fp)
+    peak_peak = sp_matrix[:num_peak, :num_peak]
+    peak_gene_down = sp_matrix[total_peak:(total_peak + num_gene), :num_peak]
+    peak_gene_up = sp_matrix[:num_peak, total_peak:(total_peak + num_gene)]
+    gene_gene = sp_matrix[total_peak:total_peak + num_gene, total_peak:total_peak + num_gene]
+
+    top = hstack([peak_peak, peak_gene_up])
+    bottom = hstack([peak_gene_down, gene_gene])
+
+    result = vstack([top, bottom])
+    rows, cols = result.nonzero()
+    edge_index = torch.tensor(np.array([rows, cols]), dtype=torch.long)
+
+    return result, edge_index
 
 def train(model_tuple, optimizer,
           train_set, total_training_set, test_set,
@@ -25,12 +48,10 @@ def train(model_tuple, optimizer,
 
     (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
      X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
-     test_gene_correlation_matrix, test_peak_correlation_matrix,
      test_feature_matrix, test_edge_index) = test_set
 
     (total_X_rna_tensor, total_X_rna_tensor_normalized, total_X_atac_tensor,
      total_X_atac_tensor_normalized, total_scRNA_anndata, total_scATAC_anndata,
-     total_gene_correlation_matrix, total_peak_correlation_matrix,
      total_feature_matrix, total_edge_index) = total_training_set
 
     print(f"val set tensor dim: {X_rna_test_tensor_normalized.shape}, {X_atac_test_tensor_normalized.shape}")
@@ -42,15 +63,13 @@ def train(model_tuple, optimizer,
         kl_weight = helper2.calc_weight(i, niter, 0, 1 / 3, 1e-2, 4)
         for train_batch in train_set:
             (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
-             scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, gene_correlation_matrix,
-             peak_correlation_matrix, feature_matrix, edge_index,
+             scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, feature_matrix, edge_index,
              mask_matrix1, mask_matrix2, X_rna_tensor_copy, X_atac_tensor_copy) = train_batch
 
             NELBO = helper2.train_one_epoch(
                 encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, optimizer, X_rna_tensor,
                 X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized, feature_matrix,
-                edge_index, gene_correlation_matrix, peak_correlation_matrix, kl_weight, use_mlp,
-                use_mask, mask_matrix1, mask_matrix2, X_rna_tensor_copy, X_atac_tensor_copy
+                edge_index, use_mlp, use_mask, mask_matrix1, mask_matrix2, X_rna_tensor_copy, X_atac_tensor_copy
             )
 
         if i % ari_freq == 0:
@@ -111,14 +130,31 @@ def train(model_tuple, optimizer,
 if __name__ == "__main__":
     rna_path = "../data/10x-Multiome-Pbmc10k-RNA.h5ad"
     atac_path = "../data/10x-Multiome-Pbmc10k-ATAC.h5ad"
-    num_of_cell = 6000
-    num_of_gene = 2000
-    num_of_peak = 2000
-    test_num_of_cell = 2000
-    batch_size = 2000
+    cor_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
+
+    gene_exp = anndata.read('../data/10x-Multiome-Pbmc10k-RNA.h5ad')
+    total_gene_num = gene_exp.shape[1]
+
+    peak_exp = anndata.read('../data/10x-Multiome-Pbmc10k-ATAC.h5ad')
+    total_peak_num = peak_exp.shape[1]
+
+    total_cell_num = gene_exp.shape[0]
+
+    # rna_path = "../data/BMMC_rna_filtered.h5ad"
+    # atac_path = "../data/BMMC_atac_filtered.h5ad"
+
+    warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
+
+    num_of_cell = 8000
+    # num_of_gene = 3000
+    num_of_gene = total_gene_num
+    # num_of_peak = 8000
+    num_of_peak = total_peak_num - 50000
+    test_num_of_cell = total_cell_num - num_of_cell
     batch_num = 10
-    emb_size = 512
-    emb_size2 = 512
+    batch_size = int(num_of_cell / batch_num)
+    emb_size = 600
+    emb_size2 = 600
     num_of_topic = 40
     gnn_conv = 'GATv2'
     num_epochs = 500
@@ -127,11 +163,18 @@ if __name__ == "__main__":
     metric = 'theta'  # mu or theta
     lr = 0.001
     use_mlp = False
-    use_mask_train = True
-    use_mask_reconstruct = True  # False: one side mask for reconstructing the masked expressions
+    use_mask_train = False
+    use_mask_reconstruct = False  # False: one side mask for reconstructing the masked expressions
     mask_ratio = 0.2
-    use_noise = True
+    use_noise = False
     noise_ratio = 0.2
+
+    result, edge_index = get_sub_graph(
+        path=cor_path,
+        num_gene=num_of_gene,
+        num_peak=num_of_peak,
+        total_peak=total_peak_num
+    )
 
     if torch.cuda.is_available():
         print("=======  GPU device found  =======")
@@ -143,8 +186,8 @@ if __name__ == "__main__":
         print("=======  No GPU found  =======")
 
     training_set, total_training_set, test_set, scRNA_adata, scATAC_adata = mini_batch.process_mini_batch_data(
-        rna_path=rna_path,
-        atac_path=atac_path,
+        scRNA_adata=gene_exp,
+        scATAC_adata=peak_exp,
         device=device,
         num_of_cell=num_of_cell,
         num_of_gene=num_of_gene,
@@ -153,8 +196,7 @@ if __name__ == "__main__":
         batch_size=batch_size,
         batch_num=batch_num,
         emb_size=emb_size,
-        use_highly_variable=True,
-        cor='pearson',
+        edge_index=edge_index,
         use_mask=use_mask_train,
         mask_ratio=mask_ratio,
         use_noise=use_noise,
@@ -206,9 +248,9 @@ if __name__ == "__main__":
     print(f"best_train_ari: {best_train_ari}, best_val_ari: {best_ari}")
     print(ari_trains)
     print(ari_tests)
-    print("=========  generate_clustermap  =========")
-    (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
-     X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
-     test_gene_correlation_matrix, test_peak_correlation_matrix,
-     test_feature_matrix, test_edge_index) = test_set
-    view_result.generate_clustermap(best_theta, scRNA_test_anndata, plot_path_rel)
+    # print("=========  generate_clustermap  =========")
+    # (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
+    #  X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
+    #  test_gene_correlation_matrix, test_peak_correlation_matrix,
+    #  test_feature_matrix, test_edge_index) = test_set
+    # view_result.generate_clustermap(best_theta, scRNA_test_anndata, plot_path_rel)
