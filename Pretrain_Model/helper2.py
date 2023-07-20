@@ -115,10 +115,10 @@ def calc_weight(
         return max_weight
 
 
-def train_one_epoch(encoder1, encoder2, gnn, gnn_decoder, mlp1, mlp2, decoder1, decoder2, optimizer1, optimizer2,
+def train_one_epoch(encoder1, encoder2, gnn, gnn_decoder, mlp1, mlp2, decoder1, decoder2, optimizer1,
                     RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
-                    feature_matrix, cor_label, edge_index, gene_gene, peak_peak, kl_weight, use_mlp,
-                    use_mask, mask1, mask2, RNA_tensor_copy, ATAC_tensor_copy):
+                    feature_matrix, edge_index, kl_weight, use_mlp,
+                    use_mask):
     encoder1.train()
     encoder2.train()
     gnn.train()
@@ -152,37 +152,8 @@ def train_one_epoch(encoder1, encoder2, gnn, gnn_decoder, mlp1, mlp2, decoder1, 
     z2 = reparameterize(mu2, log_sigma2)
     theta2 = F.softmax(z2, dim=-1)
 
-    # gnn(feature_matrix, edge_index)
-    # emb = gnn.get_embedding().detach().clone()
-    # new_emb = mlp1(emb)
-    # num_of_peak x emb, num_of_gene x emb
-
-    z = gnn(feature_matrix, edge_index)
-    emb = z
-    optimizer1.zero_grad()
+    emb = gnn(feature_matrix, edge_index)
     eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
-    # recon_loss3, kl_graph = utils.loss_function(preds=recovered, labels=cor_label,
-    #                      mu=mu, logvar=logvar)
-    EPS = 1e-15
-
-    edge_index_gene = gene_gene.nonzero().t()
-
-    pos_loss_gene = -torch.log(gnn_decoder(rho, edge_index_gene, sigmoid=True) + EPS).mean()
-    neg_edge_index = None
-    if neg_edge_index is None:
-        neg_edge_index = negative_sampling(edge_index_gene, rho.size(0))
-    neg_loss_gene = -torch.log(1 - gnn_decoder(rho, neg_edge_index, sigmoid=True) + EPS).mean()
-    recon_loss3 = pos_loss_gene + neg_loss_gene
-    print(recon_loss3)
-
-    edge_index_peak = peak_peak.nonzero().t()
-    pos_loss_peak = -torch.log(gnn_decoder(eta, edge_index_peak, sigmoid=True) + EPS).mean()
-    neg_edge_index = None
-    if neg_edge_index is None:
-        neg_edge_index = negative_sampling(edge_index_peak, eta.size(0))
-    neg_loss_peak = -torch.log(1 - gnn_decoder(eta, neg_edge_index, sigmoid=True) + EPS).mean()
-    recon_loss4 = pos_loss_peak + neg_loss_peak
-    print(recon_loss4)
 
     if use_mlp:
         # print("using mlp")
@@ -201,8 +172,6 @@ def train_one_epoch(encoder1, encoder2, gnn, gnn_decoder, mlp1, mlp2, decoder1, 
     recon_loss2 = -(pred_ATAC_tensor * ATAC_tensor).sum(-1)
 
     recon_loss = (recon_loss1 + recon_loss2).mean()
-    print((recon_loss3 + recon_loss4).mean())
-    recon_loss += (recon_loss3 + recon_loss4)
     kl_loss = kl_theta1 + kl_theta2
 
     # loss = recon_loss + kl_loss * kl_weight
@@ -415,13 +384,14 @@ def process_data(rna_path, atac_path, device, num_of_cell,
     print(scATAC_adata)
 
     scRNA_adata_copy = scRNA_adata.copy()
-    sc.pp.normalize_total(scRNA_adata, target_sum=1e4)
-    sc.pp.log1p(scRNA_adata)
+    sc.pp.normalize_total(scRNA_adata_copy, target_sum=1e4)
+    sc.pp.log1p(scRNA_adata_copy)
+    sc.pp.highly_variable_genes(scRNA_adata_copy, n_top_genes=num_of_peak)
 
     scATAC_adata_copy = scATAC_adata.copy()
-    sc.pp.normalize_total(scATAC_adata, target_sum=1e4)
-    sc.pp.log1p(scATAC_adata)
-    sc.pp.highly_variable_genes(scATAC_adata)
+    sc.pp.normalize_total(scATAC_adata_copy, target_sum=1e4)
+    sc.pp.log1p(scATAC_adata_copy)
+    sc.pp.highly_variable_genes(scATAC_adata_copy, n_top_genes=num_of_peak)
 
     print(sum(scRNA_adata.var["highly_variable"]))
     print(sum(scATAC_adata.var["highly_variable"]))
