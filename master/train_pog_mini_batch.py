@@ -119,6 +119,8 @@ if __name__ == "__main__":
     total_peak = peak_exp.shape[1]
     total_cell_num = gene_exp.shape[0]
 
+    # index_path = '../data/relation/gene_peak_index_relation.pickle'
+    # gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None, gene_limit=20000)
     index_path = '../data/relation/highly_gene_peak_index_relation.pickle'
     gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None)
     gene_exp = gene_exp[:, gene_index_list]
