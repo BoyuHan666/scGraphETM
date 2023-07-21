@@ -19,7 +19,7 @@ Get sub graph
 """
 
 
-def get_peak_index(path, top=5, threshould=None):
+def get_peak_index(path, top=5, threshould=None, gene_limit=None):
     with open(path, 'rb') as fp:
         gene_peak = pickle.load(fp)
 
@@ -31,12 +31,18 @@ def get_peak_index(path, top=5, threshould=None):
             gene_index_list.append(gene)
             for j, dist in gene_peak[gene][:top]:
                 peak_index_list.append(j)
+            if gene_limit is not None:
+                if i == gene_limit:
+                    break
     else:
         for i, gene in enumerate(gene_peak.keys()):
             gene_index_list.append(gene)
             for j, dist in gene_peak[gene][:top]:
                 if dist < threshould:
                     peak_index_list.append(j)
+            if gene_limit is not None:
+                if i == gene_limit:
+                    break
 
     gene_index_list = list(set(gene_index_list))
     peak_index_list = list(set(peak_index_list))
