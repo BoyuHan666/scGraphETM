@@ -52,13 +52,13 @@ if __name__ == "__main__":
                 dist = min(abs(peak_start - gene_start), abs(peak_end - gene_end))
                 # Push item onto heap, then pop and return smallest item
                 if len(dist_peak_list) < 5:
-                    heapq.heappush(dist_peak_list, (-dist, peak))
+                    heapq.heappush(dist_peak_list, (-dist, j))
                 else:
-                    heapq.heappushpop(dist_peak_list, (-dist, peak))
+                    heapq.heappushpop(dist_peak_list, (-dist, j))
 
         # Get nearest peaks and reverse the negative distance
-        nearest_peaks = sorted([(peak, -dist) for dist, peak in dist_peak_list], key=lambda x: x[1])
-        gene_peak_relation[gene] = nearest_peaks
+        nearest_peaks = sorted([(j, -dist) for dist, j in dist_peak_list], key=lambda x: x[1])
+        gene_peak_relation[i] = nearest_peaks
 
     # def process_gene(gene):
     #     gene_chrom, gene_start, gene_end = gene_pos_dic[gene]
@@ -87,12 +87,13 @@ if __name__ == "__main__":
     print(end - start)
     # print(gene_peak_relation)
 
-    with open('../data/relation/gene_peak_relation.pickle', 'wb') as fp:
+    with open('../data/relation/gene_peak_index_relation.pickle', 'wb') as fp:
         pickle.dump(gene_peak_relation, fp)
 
-    with open('../data/relation/gene_peak_relation.pickle', 'rb') as fp:
+    with open('../data/relation/gene_peak_index_relation.pickle', 'rb') as fp:
         gpr = pickle.load(fp)
 
     print(len(gpr))
+    print(gpr)
 
 
