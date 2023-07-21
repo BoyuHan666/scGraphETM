@@ -3,8 +3,6 @@ from torch import optim
 import time
 import warnings
 from numba.core.errors import NumbaDeprecationWarning
-import numpy as np
-import pickle
 import anndata
 
 import select_gpu
@@ -109,15 +107,10 @@ def train(model_tuple, optimizer,
 
 
 if __name__ == "__main__":
-
     rna_path = "../data/10x-Multiome-Pbmc10k-RNA.h5ad"
     atac_path = "../data/10x-Multiome-Pbmc10k-ATAC.h5ad"
     # rna_path = "../data/BMMC_rna_filtered.h5ad"
     # atac_path = "../data/BMMC_atac_filtered.h5ad"
-
-    # cor_path = '../data/TF_gene/top1peak_gene.pickle'
-    # cor_path = ''
-    cor_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
 
     gene_exp = anndata.read('../data/10x-Multiome-Pbmc10k-RNA.h5ad')
     total_gene = gene_exp.shape[1]
@@ -126,20 +119,20 @@ if __name__ == "__main__":
     total_peak = peak_exp.shape[1]
     total_cell_num = gene_exp.shape[0]
 
-    # index_path = '../data/relation/highly_gene_peak_index_relation.pickle'
-    # gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None)
-    # gene_exp = gene_exp[:, gene_index_list]
-    # gene_num = gene_exp.shape[1]
-    # peak_exp = peak_exp[:, peak_index_list]
-    # peak_num = peak_exp.shape[1]
+    index_path = '../data/relation/highly_gene_peak_index_relation.pickle'
+    gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None)
+    gene_exp = gene_exp[:, gene_index_list]
+    gene_num = gene_exp.shape[1]
+    peak_exp = peak_exp[:, peak_index_list]
+    peak_num = peak_exp.shape[1]
 
     warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
 
     num_of_cell = 8000
-    num_of_gene = 3000
-    num_of_peak = 8000
-    # num_of_gene = total_gene_num
-    # num_of_peak = total_peak_num - 50000
+    # num_of_gene = 24095
+    # num_of_peak = 67194
+    num_of_gene = gene_num
+    num_of_peak = peak_num
     test_num_of_cell = total_cell_num - num_of_cell
     batch_num = 10
     batch_size = int(num_of_cell / batch_num)
@@ -159,20 +152,23 @@ if __name__ == "__main__":
     use_noise = False
     noise_ratio = 0.2
 
-    # mtx_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
-    # result, edge_index = helper2.get_sub_graph_by_index(
-    #     path=mtx_path,
-    #     gene_index_list=gene_index_list,
-    #     peak_index_list=peak_index_list,
-    #     total_peak=total_peak
-    # )
-
-    result, edge_index = helper2.get_sub_graph(
-        path=cor_path,
-        num_gene=num_of_gene,
-        num_peak=num_of_peak,
+    mtx_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
+    result, edge_index = helper2.get_sub_graph_by_index(
+        path=mtx_path,
+        gene_index_list=gene_index_list,
+        peak_index_list=peak_index_list,
         total_peak=total_peak
     )
+
+    # cor_path = '../data/TF_gene/top1peak_gene.pickle'
+    # cor_path = ''
+    # cor_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
+    # result, edge_index = helper2.get_sub_graph(
+    #     path=cor_path,
+    #     num_gene=num_of_gene,
+    #     num_peak=num_of_peak,
+    #     total_peak=total_peak
+    # )
 
     print(result.shape)
     print(result.sum())
