@@ -13,32 +13,6 @@ import helper2
 import model2
 import view_result
 
-from scipy.sparse import vstack, hstack
-from scipy.sparse import csr_matrix
-
-
-def get_sub_graph(path, num_gene, num_peak, total_peak):
-    if path == '':
-        result = torch.zeros(num_of_peak + num_of_gene, num_of_peak + num_of_gene)
-        result = csr_matrix(result.cpu())
-    else:
-        with open(path, 'rb') as fp:
-            sp_matrix = pickle.load(fp)
-        peak_peak = sp_matrix[:num_peak, :num_peak]
-        peak_gene_down = sp_matrix[total_peak:(total_peak + num_gene), :num_peak]
-        peak_gene_up = sp_matrix[:num_peak, total_peak:(total_peak + num_gene)]
-        gene_gene = sp_matrix[total_peak:total_peak + num_gene, total_peak:total_peak + num_gene]
-
-        top = hstack([peak_peak, peak_gene_up])
-        bottom = hstack([peak_gene_down, gene_gene])
-
-        result = vstack([top, bottom])
-
-    rows, cols = result.nonzero()
-    edge_index = torch.tensor(np.array([rows, cols]), dtype=torch.long)
-
-    return result, edge_index
-
 
 def train(model_tuple, optimizer,
           train_set, total_training_set, test_set,
@@ -138,18 +112,26 @@ if __name__ == "__main__":
 
     rna_path = "../data/10x-Multiome-Pbmc10k-RNA.h5ad"
     atac_path = "../data/10x-Multiome-Pbmc10k-ATAC.h5ad"
+    # rna_path = "../data/BMMC_rna_filtered.h5ad"
+    # atac_path = "../data/BMMC_atac_filtered.h5ad"
+
+    # cor_path = '../data/TF_gene/top1peak_gene.pickle'
+    # cor_path = ''
     cor_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
 
     gene_exp = anndata.read('../data/10x-Multiome-Pbmc10k-RNA.h5ad')
-    total_gene_num = gene_exp.shape[1]
+    total_gene = gene_exp.shape[1]
 
     peak_exp = anndata.read('../data/10x-Multiome-Pbmc10k-ATAC.h5ad')
-    total_peak_num = peak_exp.shape[1]
-
+    total_peak = peak_exp.shape[1]
     total_cell_num = gene_exp.shape[0]
 
-    # rna_path = "../data/BMMC_rna_filtered.h5ad"
-    # atac_path = "../data/BMMC_atac_filtered.h5ad"
+    # index_path = '../data/relation/highly_gene_peak_index_relation.pickle'
+    # gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None)
+    # gene_exp = gene_exp[:, gene_index_list]
+    # gene_num = gene_exp.shape[1]
+    # peak_exp = peak_exp[:, peak_index_list]
+    # peak_num = peak_exp.shape[1]
 
     warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
 
@@ -177,11 +159,19 @@ if __name__ == "__main__":
     use_noise = False
     noise_ratio = 0.2
 
-    result, edge_index = get_sub_graph(
+    # mtx_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
+    # result, edge_index = helper2.get_sub_graph_by_index(
+    #     path=mtx_path,
+    #     gene_index_list=gene_index_list,
+    #     peak_index_list=peak_index_list,
+    #     total_peak=total_peak
+    # )
+
+    result, edge_index = helper2.get_sub_graph(
         path=cor_path,
         num_gene=num_of_gene,
         num_peak=num_of_peak,
-        total_peak=total_peak_num
+        total_peak=total_peak
     )
 
     print(result.shape)
