@@ -7,17 +7,29 @@ from tqdm import tqdm
 import scipy.sparse as sp
 
 
-def get_peak_index(path, top=5):
+def get_peak_index(path, top=5, threshould=None):
     with open(path, 'rb') as fp:
         gene_peak = pickle.load(fp)
 
+    gene_index_list = []
     peak_index_list = []
-    for i, gene in tqdm(enumerate(gene_peak.keys())):
-        for j, dist in gene_peak[gene][:top]:
-            peak_index_list.append(j)
+
+    if threshould is None:
+        for i, gene in tqdm(enumerate(gene_peak.keys())):
+            gene_index_list.append(gene)
+            for j, dist in gene_peak[gene][:top]:
+                peak_index_list.append(j)
+    else:
+        for i, gene in tqdm(enumerate(gene_peak.keys())):
+            gene_index_list.append(gene)
+            for j, dist in gene_peak[gene][:top]:
+                if dist < 2000:
+                    peak_index_list.append(j)
+
+    gene_index_list = list(set(gene_index_list))
     peak_index_list = list(set(peak_index_list))
 
-    return peak_index_list
+    return gene_index_list, peak_index_list
 
 if __name__ == "__main__":
 
@@ -71,12 +83,18 @@ if __name__ == "__main__":
     # print(tf_gene.sum())
 
     path = '../data/relation/gene_peak_index_relation.pickle'
-    peak_index_list = get_peak_index(path, top=1)
+    gene_index_list, peak_index_list = get_peak_index(path, top=5, threshould=2000)
 
+    print(len(gene_index_list))
     print(len(peak_index_list))
+
+    scRNA_adata = anndata.read_h5ad("../data/10x-Multiome-Pbmc10k-RNA.h5ad")
+    scRNA_adata = scRNA_adata[:, gene_index_list]
 
     scATAC_adata = anndata.read_h5ad("../data/10x-Multiome-Pbmc10k-ATAC.h5ad")
     scATAC_adata = scATAC_adata[:, peak_index_list]
+
+    print(scRNA_adata)
     print(scATAC_adata)
 
 

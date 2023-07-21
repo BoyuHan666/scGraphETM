@@ -4,6 +4,7 @@ import time
 # import numpy as np
 # import scipy.sparse as sp
 from tqdm import tqdm
+import scanpy as sc
 
 import heapq
 import concurrent
@@ -14,6 +15,18 @@ if __name__ == "__main__":
 
     scRNA_adata = anndata.read_h5ad("../data/10x-Multiome-Pbmc10k-RNA.h5ad")
     scATAC_adata = anndata.read_h5ad("../data/10x-Multiome-Pbmc10k-ATAC.h5ad")
+
+    scRNA_adata_copy = scRNA_adata.copy()
+    sc.pp.normalize_total(scRNA_adata_copy, target_sum=1e4)
+    sc.pp.log1p(scRNA_adata_copy)
+    sc.pp.highly_variable_genes(scRNA_adata_copy, n_top_genes=3000)
+    scRNA_adata.var['highly_variable'] = scRNA_adata_copy.var['highly_variable']
+
+    index1 = scRNA_adata.var['highly_variable'].values
+    index1 = [i for i, value in enumerate(index1) if value]
+    # scRNA_adata = scRNA_adata[:, index1]
+    #
+    # print(scRNA_adata)
 
     num_of_gene = scRNA_adata.X.shape[1]
     num_of_peak = scATAC_adata.X.shape[1]
@@ -44,21 +57,22 @@ if __name__ == "__main__":
 
 
     for i, gene in tqdm(enumerate(gene_pos_dic.keys())):
-        gene_chrom, gene_start, gene_end = gene_pos_dic[gene]
-        dist_peak_list = []
-        for j, peak in enumerate(peak_pos_dic.keys()):
-            peak_chrom, peak_start, peak_end = peak_pos_dic[peak]
-            if gene_chrom == peak_chrom:
-                dist = min(abs(peak_start - gene_start), abs(peak_end - gene_end))
-                # Push item onto heap, then pop and return smallest item
-                if len(dist_peak_list) < 5:
-                    heapq.heappush(dist_peak_list, (-dist, j))
-                else:
-                    heapq.heappushpop(dist_peak_list, (-dist, j))
+        if i in index1:
+            gene_chrom, gene_start, gene_end = gene_pos_dic[gene]
+            dist_peak_list = []
+            for j, peak in enumerate(peak_pos_dic.keys()):
+                peak_chrom, peak_start, peak_end = peak_pos_dic[peak]
+                if gene_chrom == peak_chrom:
+                    dist = min(abs(peak_start - gene_start), abs(peak_end - gene_end))
+                    # Push item onto heap, then pop and return smallest item
+                    if len(dist_peak_list) < 5:
+                        heapq.heappush(dist_peak_list, (-dist, j))
+                    else:
+                        heapq.heappushpop(dist_peak_list, (-dist, j))
 
-        # Get nearest peaks and reverse the negative distance
-        nearest_peaks = sorted([(j, -dist) for dist, j in dist_peak_list], key=lambda x: x[1])
-        gene_peak_relation[i] = nearest_peaks
+            # Get nearest peaks and reverse the negative distance
+            nearest_peaks = sorted([(j, -dist) for dist, j in dist_peak_list], key=lambda x: x[1])
+            gene_peak_relation[i] = nearest_peaks
 
     # def process_gene(gene):
     #     gene_chrom, gene_start, gene_end = gene_pos_dic[gene]
@@ -87,13 +101,12 @@ if __name__ == "__main__":
     print(end - start)
     # print(gene_peak_relation)
 
-    with open('../data/relation/gene_peak_index_relation.pickle', 'wb') as fp:
+    with open('../data/relation/highly_gene_peak_index_relation.pickle', 'wb') as fp:
         pickle.dump(gene_peak_relation, fp)
 
-    with open('../data/relation/gene_peak_index_relation.pickle', 'rb') as fp:
+    with open('../data/relation/highly_gene_peak_index_relation.pickle', 'rb') as fp:
         gpr = pickle.load(fp)
 
-    print(len(gpr))
     print(gpr)
-
+    print(len(gpr))
 
