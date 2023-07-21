@@ -64,6 +64,14 @@ def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata
 
     X_rna_test = scRNA_adata.X.toarray()[test_start:test_end, :num_of_gene]
     X_rna_test_tensor = torch.from_numpy(X_rna_test)
+
+    # medians = torch.median(X_rna_test_tensor, dim=0).values
+    # medians = medians.unsqueeze(0).expand_as(X_rna_test_tensor)
+    # X_rna_test_tensor_normalized = X_rna_test_tensor / medians
+    #
+    # sums_test_rna = X_rna_test_tensor.sum(1).unsqueeze(1)
+    # X_rna_test_tensor_normalized = X_rna_test_tensor_normalized / sums_test_rna
+
     sums_test_rna = X_rna_test_tensor.sum(1).unsqueeze(1)
     X_rna_test_tensor_normalized = X_rna_test_tensor / sums_test_rna
 
@@ -81,6 +89,14 @@ def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata
 
     X_atac_test = scATAC_adata.X.toarray()[test_start:test_end, :num_of_peak]
     X_atac_test_tensor = torch.from_numpy(X_atac_test)
+
+    # medians = torch.median(X_atac_test_tensor, dim=0).values
+    # medians = medians.unsqueeze(0).expand_as(X_atac_test_tensor)
+    # X_atac_test_tensor_normalized = X_atac_test_tensor / medians
+    #
+    # sums_test_atac = X_atac_test_tensor.sum(1).unsqueeze(1)
+    # X_atac_test_tensor_normalized = X_atac_test_tensor_normalized / sums_test_atac
+
     sums_test_atac = X_atac_test_tensor.sum(1).unsqueeze(1)
     X_atac_test_tensor_normalized = X_atac_test_tensor / sums_test_atac
 
@@ -159,6 +175,13 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
         if use_noise:
             X_rna_tensor = add_noise(X_rna_tensor, noise_ratio)
 
+        # medians = torch.median(X_rna_tensor, dim=0).values
+        # medians = medians.unsqueeze(0).expand_as(X_rna_tensor)
+        # X_rna_tensor_normalized = X_rna_tensor / medians
+        #
+        # sums_rna = X_rna_tensor.sum(1).unsqueeze(1)
+        # X_rna_tensor_normalized = X_rna_tensor_normalized / sums_rna
+
         sums_rna = X_rna_tensor.sum(1).unsqueeze(1)
         X_rna_tensor_normalized = X_rna_tensor / sums_rna
 
@@ -195,6 +218,13 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
 
         if use_noise:
             X_atac_tensor = add_noise(X_atac_tensor, noise_ratio)
+
+        # medians = torch.median(X_atac_tensor, dim=0).values
+        # medians = medians.unsqueeze(0).expand_as(X_atac_tensor)
+        # X_atac_tensor_normalized = X_atac_tensor / medians
+        #
+        # sums_atac = X_atac_tensor.sum(1).unsqueeze(1)
+        # X_atac_tensor_normalized = X_atac_tensor_normalized / sums_atac
 
         sums_atac = X_atac_tensor.sum(1).unsqueeze(1)
         X_atac_tensor_normalized = X_atac_tensor / sums_atac

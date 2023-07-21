@@ -2,14 +2,104 @@ import torch
 from scipy import stats
 from torch.nn import functional as F
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
-from sklearn.cluster import KMeans, SpectralClustering, DBSCAN
 from torch.autograd import Variable
-
 
 import anndata as ad
 import scanpy as sc
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.sparse import vstack, hstack
+from scipy.sparse import csr_matrix
+import pickle
+
+"""
+==============================================================================
+Get sub graph
+==============================================================================
+"""
+
+
+def get_peak_index(path, top=5, threshould=None):
+    with open(path, 'rb') as fp:
+        gene_peak = pickle.load(fp)
+
+    gene_index_list = []
+    peak_index_list = []
+
+    if threshould is None:
+        for i, gene in enumerate(gene_peak.keys()):
+            gene_index_list.append(gene)
+            for j, dist in gene_peak[gene][:top]:
+                peak_index_list.append(j)
+    else:
+        for i, gene in enumerate(gene_peak.keys()):
+            gene_index_list.append(gene)
+            for j, dist in gene_peak[gene][:top]:
+                if dist < threshould:
+                    peak_index_list.append(j)
+
+    gene_index_list = list(set(gene_index_list))
+    peak_index_list = list(set(peak_index_list))
+
+    return gene_index_list, peak_index_list
+
+
+def get_sub_graph(path, num_gene, num_peak, total_peak):
+    if path == '':
+        result = torch.zeros(num_peak + num_gene, num_peak + num_gene)
+        result = csr_matrix(result.cpu())
+    else:
+        with open(path, 'rb') as fp:
+            sp_matrix = pickle.load(fp)
+        peak_peak = sp_matrix[:num_peak, :num_peak]
+        peak_gene_down = sp_matrix[total_peak:(total_peak + num_gene), :num_peak]
+        peak_gene_up = sp_matrix[:num_peak, total_peak:(total_peak + num_gene)]
+        gene_gene = sp_matrix[total_peak:total_peak + num_gene, total_peak:total_peak + num_gene]
+
+        top = hstack([peak_peak, peak_gene_up])
+        bottom = hstack([peak_gene_down, gene_gene])
+
+        result = vstack([top, bottom])
+
+    rows, cols = result.nonzero()
+    edge_index = torch.tensor(np.array([rows, cols]), dtype=torch.long)
+
+    return result, edge_index
+
+
+def get_sub_graph_by_index(path, gene_index_list, peak_index_list, total_peak):
+    with open(path, 'rb') as fp:
+        sp_matrix = pickle.load(fp)
+
+    print(f"sp_matrix.shape: {sp_matrix.shape}")
+    peak_peak = sp_matrix[peak_index_list, :]
+    peak_peak = peak_peak[:, peak_index_list]
+    print(f"peak_peak.shape: {peak_peak.shape}")
+
+    tmp_index_list = [total_peak + i for i in gene_index_list]
+
+    peak_gene_down = sp_matrix[tmp_index_list, :]
+    peak_gene_down = peak_gene_down[:, peak_index_list]
+    print(f"peak_gene_down.shape: {peak_gene_down.shape}")
+
+    peak_gene_up = sp_matrix[peak_index_list, :]
+    peak_gene_up = peak_gene_up[:, tmp_index_list]
+    print(f"peak_gene_up.shape: {peak_gene_up.shape}")
+
+    gene_gene = sp_matrix[tmp_index_list, :]
+    gene_gene = gene_gene[:, tmp_index_list]
+    print(f"gene_gene.shape: {gene_gene.shape}")
+
+    top = hstack([peak_peak, peak_gene_up])
+    bottom = hstack([peak_gene_down, gene_gene])
+
+    result = vstack([top, bottom])
+
+    rows, cols = result.nonzero()
+    edge_index = torch.tensor(np.array([rows, cols]), dtype=torch.long)
+
+    return result, edge_index
+
 
 """
 ==============================================================================
@@ -56,8 +146,8 @@ def evaluate_ari2(cell_embed, adata):
     best_resolution, best_ari, best_nmi = 0, 0, 0
     resolutions = [0.15]
     n_neighbors = [30]
-    # resolutions = [0.15, 0.16, 0.17, 0.18, 0.19, 0.20]
-    # n_neighbors = [30, 35, 40, 45, 50, 55, 60]
+    # resolutions = [0.15, 0.20]
+    # n_neighbors = [30, 50]
     for n_neighbor in n_neighbors:
         sc.pp.neighbors(adata, use_rep="cell_embed", n_neighbors=n_neighbor)
         for clustering_method in clustering_methods:
