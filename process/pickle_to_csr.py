@@ -23,7 +23,7 @@ def get_peak_index(path, top=5, threshould=None):
         for i, gene in tqdm(enumerate(gene_peak.keys())):
             gene_index_list.append(gene)
             for j, dist in gene_peak[gene][:top]:
-                if dist < 2000:
+                if dist < threshould:
                     peak_index_list.append(j)
 
     gene_index_list = list(set(gene_index_list))
