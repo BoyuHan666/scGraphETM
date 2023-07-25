@@ -15,7 +15,7 @@ import view_result
 def train(model_tuple, optimizer,
           train_set, total_training_set, test_set,
           metric, ari_freq, niter, use_mlp,
-          use_mask):
+          use_mask, result):
     NELBO = None
     best_ari = 0
     best_train_ari = 0
@@ -37,7 +37,7 @@ def train(model_tuple, optimizer,
     print(f"val set tensor dim: {X_rna_test_tensor_normalized.shape}, {X_atac_test_tensor_normalized.shape}")
     print(f"train set tensor dim: {total_X_rna_tensor_normalized.shape}, {total_X_atac_tensor_normalized.shape}")
 
-    (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2) = model_tuple
+    (encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2) = model_tuple
 
     for i in range(niter):
         kl_weight = helper2.calc_weight(i, niter, 0, 1 / 3, 1e-2, 4)
@@ -46,11 +46,13 @@ def train(model_tuple, optimizer,
              scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, feature_matrix, edge_index,
              mask_matrix1, mask_matrix2, X_rna_tensor_copy, X_atac_tensor_copy) = train_batch
 
-            NELBO = helper2.train_one_epoch(
-                encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, optimizer, X_rna_tensor,
+            recon_loss, kl_loss = helper2.train_one_epoch(
+                encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2, optimizer, X_rna_tensor,
                 X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized, feature_matrix,
-                edge_index, use_mlp, use_mask, mask_matrix1, mask_matrix2, X_rna_tensor_copy, X_atac_tensor_copy
+                edge_index, result, use_mlp, use_mask, mask_matrix1, mask_matrix2, X_rna_tensor_copy, X_atac_tensor_copy
             )
+
+            NELBO = recon_loss + kl_loss
 
         if i % ari_freq == 0:
             # with torch.no_grad():
@@ -80,10 +82,10 @@ def train(model_tuple, optimizer,
             ari_trains.append(ari_train)
             ari_tests.append(ari)
 
-            print('====  Iter: {},  NELBO: {:.4f}  ====\n'
+            print('====  Iter: {}, NELBO: {:.4f}, recon_loss: {:.4f}, kl_loss: {:.4f}  ====\n'
                   'Train res: {}\t Train ARI: {:.4f}\t Train NMI: {:.4f}\n'
                   'Valid res: {}\t Valid ARI: {:.4f}\t Valid NMI: {:.4f}\n'
-                  .format(i, NELBO,
+                  .format(i, NELBO, recon_loss, kl_loss,
                           res_train, ari_train, nmi_train,
                           res, ari, nmi)
                   )
@@ -120,7 +122,7 @@ if __name__ == "__main__":
     total_cell_num = gene_exp.shape[0]
 
     # index_path = '../data/relation/gene_peak_index_relation.pickle'
-    # gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None, gene_limit=20000)
+    # gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None, gene_limit=12000)
     index_path = '../data/relation/highly_gene_peak_index_relation.pickle'
     gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None)
     gene_exp = gene_exp[:, gene_index_list]
@@ -131,15 +133,15 @@ if __name__ == "__main__":
     warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
 
     num_of_cell = 8000
-    # num_of_gene = 24095
-    # num_of_peak = 67194
+    # num_of_gene = 20000
+    # num_of_peak = 60000
     num_of_gene = gene_num
     num_of_peak = peak_num
     test_num_of_cell = total_cell_num - num_of_cell
     batch_num = 10
     batch_size = int(num_of_cell / batch_num)
-    emb_size = 600
-    emb_size2 = 600
+    emb_size = 512
+    emb_size2 = 512
     num_of_topic = 40
     gnn_conv = 'GATv2'
     num_epochs = 500
@@ -162,9 +164,7 @@ if __name__ == "__main__":
         total_peak=total_peak
     )
 
-    # cor_path = '../data/TF_gene/top1peak_gene.pickle'
-    # cor_path = ''
-    # cor_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
+    # cor_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
     # result, edge_index = helper2.get_sub_graph(
     #     path=cor_path,
     #     num_gene=num_of_gene,
@@ -172,8 +172,6 @@ if __name__ == "__main__":
     #     total_peak=total_peak
     # )
 
-    print(result.shape)
-    print(result.sum())
 
     if torch.cuda.is_available():
         print("=======  GPU device found  =======")
@@ -183,6 +181,11 @@ if __name__ == "__main__":
     else:
         device = torch.device("cpu")
         print("=======  No GPU found  =======")
+
+    result_dense = result.toarray()
+    result_tensor = torch.from_numpy(result_dense).float().to(device)
+    print(f"result.shape: {result_tensor.shape}, result type: {type(result_tensor)}")
+    print(result_tensor.sum())
 
     training_set, total_training_set, test_set, scRNA_adata, scATAC_adata = mini_batch.process_mini_batch_data(
         scRNA_adata=gene_exp,
@@ -204,9 +207,10 @@ if __name__ == "__main__":
 
     encoder1 = model2.VAE(num_of_gene, emb_size, num_of_topic).to(device)
     encoder2 = model2.VAE(num_of_peak, emb_size, num_of_topic).to(device)
-    gnn = model2.GNN(emb_size, emb_size2 * 2, emb_size2, 1, device, 0, gnn_conv).to(device)
+    gnn = model2.GNN(emb_size2, emb_size2 * 4, emb_size2, 1, device, 0, gnn_conv).to(device)
     mlp1 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
     mlp2 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
+    graph_dec = model2.DEC(emb_size2, emb_size2 * 4, num_of_peak+num_of_gene).to(device)
     decoder1 = model2.LDEC(num_of_gene, emb_size, num_of_topic, batch_size).to(device)
     decoder2 = model2.LDEC(num_of_peak, emb_size, num_of_topic, batch_size).to(device)
 
@@ -215,13 +219,14 @@ if __name__ == "__main__":
                   {'params': gnn.parameters()},
                   {'params': mlp1.parameters()},
                   {'params': mlp2.parameters()},
+                  {'params': graph_dec.parameters()},
                   {'params': decoder1.parameters()},
                   {'params': decoder2.parameters()}
                   ]
 
     optimizer = optim.Adam(parameters, lr=lr, weight_decay=1.2e-6)
 
-    model_tuple = (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2)
+    model_tuple = (encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2)
     for model in model_tuple:
         print(model)
 
@@ -240,6 +245,7 @@ if __name__ == "__main__":
         niter=num_epochs,
         use_mlp=use_mlp,
         use_mask=use_mask_reconstruct,
+        result=result_tensor,
     )
     ed = time.time()
     print(f"training time: {ed - st}")
