@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import select_gpu
 from scipy.sparse import vstack, hstack
+import pickle
 
 
 def add_noise(tensor, noise_rate):
@@ -49,6 +50,15 @@ def add_noise(tensor, noise_rate):
 
     print("==== finish noise ====")
     return tensor
+
+
+def generate_feature_matrix(scRNA_adata, scATAC_adata, num_of_cell, num_of_gene, num_of_peak):
+    gene_exp = scRNA_adata.X[:num_of_cell, :num_of_gene].transpose()
+    peak_exp = scATAC_adata.X[:num_of_cell, :num_of_peak].transpose()
+    feature_matrix_sparse = vstack([peak_exp, gene_exp])
+    feature_matrix_dense = feature_matrix_sparse.A
+    feature_matrix_tensor = torch.from_numpy(feature_matrix_dense)
+    return feature_matrix_tensor
 
 
 def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata, feature_matrix, edge_index, device):
@@ -134,6 +144,9 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
                             use_noise=True, noise_ratio=0.2):
     print("======  start processing data  ======")
     feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
+    # feature_matrix = generate_feature_matrix(scRNA_adata, scATAC_adata, num_of_cell, num_of_gene, num_of_peak)
+    # with open('/home/alainhby/projects/ctb-liyue/alainhby/code/data/feature_matrix/feature_matrix.pickle', 'wb') as f:
+    #     pickle.dump(feature_matrix, f)
     training_set = []
 
     for i in range(batch_num):

@@ -3,6 +3,7 @@ from scipy import stats
 from torch.nn import functional as F
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from torch.autograd import Variable
+from torch.nn import BCEWithLogitsLoss, MSELoss, L1Loss, NLLLoss
 
 import anndata as ad
 import scanpy as sc
@@ -28,21 +29,23 @@ def get_peak_index(path, top=5, threshould=None, gene_limit=None):
 
     if threshould is None:
         for i, gene in enumerate(gene_peak.keys()):
-            gene_index_list.append(gene)
-            for j, dist in gene_peak[gene][:top]:
-                peak_index_list.append(j)
             if gene_limit is not None:
                 if i == gene_limit:
                     break
+
+            gene_index_list.append(gene)
+            for j, dist in gene_peak[gene][:top]:
+                peak_index_list.append(j)
     else:
         for i, gene in enumerate(gene_peak.keys()):
+            if gene_limit is not None:
+                if i == gene_limit:
+                    break
+
             gene_index_list.append(gene)
             for j, dist in gene_peak[gene][:top]:
                 if dist < threshould:
                     peak_index_list.append(j)
-            if gene_limit is not None:
-                if i == gene_limit:
-                    break
 
     gene_index_list = list(set(gene_index_list))
     peak_index_list = list(set(peak_index_list))
@@ -230,15 +233,16 @@ def calc_weight(
         return max_weight
 
 
-def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, optimizer,
+def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2, optimizer,
                     RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
-                    feature_matrix, edge_index, use_mlp,
+                    feature_matrix, edge_index, result, use_mlp,
                     use_mask, mask1, mask2, RNA_tensor_copy, ATAC_tensor_copy):
     encoder1.train()
     encoder2.train()
     gnn.train()
     mlp1.train()
     mlp2.train()
+    graph_dec.train()
     decoder1.train()
     decoder2.train()
 
@@ -250,6 +254,7 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
     gnn.zero_grad()
     mlp1.zero_grad()
     mlp2.zero_grad()
+    graph_dec.zero_grad()
     decoder1.zero_grad()
     decoder2.zero_grad()
 
@@ -265,11 +270,19 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
     # print(f"theta1:\n {theta1}")
     # print(f"theta2:\n {theta2}")
 
+    # (gene + peak) x emb
     emb = gnn(feature_matrix, edge_index)
-    emb = mlp1(emb)
+    act_emb = mlp1(emb)
+
+    # compute adjacent matrix loss
+    # result_hat = graph_dec(emb)
+    # result_hat = torch.round(result_hat)
+    #
+    # loss_fn = L1Loss()
+    # graph_recon_loss = loss_fn(result_hat, result)
+
     # num_of_peak x emb, num_of_gene x emb
-    # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
-    eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
+    eta, rho = split_tensor(act_emb, ATAC_tensor_normalized.shape[1])
 
     if use_mlp:
         # print("using mlp")
@@ -277,7 +290,7 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
         eta = mlp2(eta)
     pred_RNA_tensor = decoder1(theta1, rho)
     pred_ATAC_tensor = decoder2(theta2, eta)
-
+    #
     # pred_RNA_tensor = decoder1(theta1)
     # pred_ATAC_tensor = decoder2(theta2)
 
@@ -302,6 +315,7 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
 
     # loss = recon_loss + kl_loss * kl_weight
     loss = recon_loss + kl_loss
+    # loss = graph_recon_loss
     loss.backward()
 
     clamp_num = 2.0
@@ -310,12 +324,13 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, opt
     torch.nn.utils.clip_grad_norm_(gnn.parameters(), clamp_num)
     torch.nn.utils.clip_grad_norm_(mlp1.parameters(), clamp_num)
     torch.nn.utils.clip_grad_norm_(mlp2.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(graph_dec.parameters(), clamp_num)
     torch.nn.utils.clip_grad_norm_(decoder1.parameters(), clamp_num)
     torch.nn.utils.clip_grad_norm_(decoder2.parameters(), clamp_num)
 
     optimizer.step()
 
-    return torch.sum(loss).item()
+    return torch.sum(recon_loss).item(), torch.sum(kl_loss).item()
 
 
 # get sample encoding theta from the trained encoder network
