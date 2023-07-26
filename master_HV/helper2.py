@@ -1,0 +1,735 @@
+import torch
+from torch import optim
+from scipy import stats
+import scipy.sparse as sp
+from torch.nn import functional as F
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+from torch.autograd import Variable
+from torch_geometric.utils import negative_sampling
+import anndata as ad
+import scanpy as sc
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.sparse import vstack, hstack
+from scipy.sparse import csr_matrix
+import pickle
+
+import model2
+"""
+==============================================================================
+Get sub graph
+==============================================================================
+"""
+
+
+def get_peak_index(path, top=5, threshould=None, gene_limit=None):
+    with open(path, 'rb') as fp:
+        gene_peak = pickle.load(fp)
+
+    gene_index_list = []
+    peak_index_list = []
+
+    if threshould is None:
+        for i, gene in enumerate(gene_peak.keys()):
+            gene_index_list.append(gene)
+            for j, dist in gene_peak[gene][:top]:
+                peak_index_list.append(j)
+            if gene_limit is not None:
+                if i == gene_limit:
+                    break
+    else:
+        for i, gene in enumerate(gene_peak.keys()):
+            gene_index_list.append(gene)
+            for j, dist in gene_peak[gene][:top]:
+                if dist < threshould:
+                    peak_index_list.append(j)
+            if gene_limit is not None:
+                if i == gene_limit:
+                    break
+
+    gene_index_list = list(set(gene_index_list))
+    peak_index_list = list(set(peak_index_list))
+
+    return gene_index_list, peak_index_list
+
+
+def get_sub_graph(path, num_gene, num_peak, total_peak):
+    if path == '':
+        result = torch.zeros(num_peak + num_gene, num_peak + num_gene)
+        result = csr_matrix(result.cpu())
+    else:
+        with open(path, 'rb') as fp:
+            sp_matrix = pickle.load(fp)
+        peak_peak = sp_matrix[:num_peak, :num_peak]
+        peak_gene_down = sp_matrix[total_peak:(total_peak + num_gene), :num_peak]
+        peak_gene_up = sp_matrix[:num_peak, total_peak:(total_peak + num_gene)]
+        gene_gene = sp_matrix[total_peak:total_peak + num_gene, total_peak:total_peak + num_gene]
+
+        top = hstack([peak_peak, peak_gene_up])
+        bottom = hstack([peak_gene_down, gene_gene])
+
+        result = vstack([top, bottom])
+
+    rows, cols = result.nonzero()
+    edge_index = torch.tensor(np.array([rows, cols]), dtype=torch.long)
+
+    return result, edge_index
+
+
+def get_sub_graph_by_index(path, gene_index_list, peak_index_list, total_peak):
+    with open(path, 'rb') as fp:
+        sp_matrix = pickle.load(fp)
+
+    print(f"sp_matrix.shape: {sp_matrix.shape}")
+    peak_peak = sp_matrix[peak_index_list, :]
+    peak_peak = peak_peak[:, peak_index_list]
+    print(f"peak_peak.shape: {peak_peak.shape}")
+
+    tmp_index_list = [total_peak + i for i in gene_index_list]
+
+    peak_gene_down = sp_matrix[tmp_index_list, :]
+    peak_gene_down = peak_gene_down[:, peak_index_list]
+    print(f"peak_gene_down.shape: {peak_gene_down.shape}")
+
+    peak_gene_up = sp_matrix[peak_index_list, :]
+    peak_gene_up = peak_gene_up[:, tmp_index_list]
+    print(f"peak_gene_up.shape: {peak_gene_up.shape}")
+
+    gene_gene = sp_matrix[tmp_index_list, :]
+    gene_gene = gene_gene[:, tmp_index_list]
+    print(f"gene_gene.shape: {gene_gene.shape}")
+
+    top = hstack([peak_peak, peak_gene_up])
+    bottom = hstack([peak_gene_down, gene_gene])
+
+    result = vstack([top, bottom])
+
+    rows, cols = result.nonzero()
+    edge_index = torch.tensor(np.array([rows, cols]), dtype=torch.long)
+
+    return result, edge_index
+
+
+"""
+==============================================================================
+New Helper
+==============================================================================
+"""
+
+
+def get_pred_cor(RNA_data, ATAC_data):
+    device = RNA_data.device
+    gene_expression = RNA_data.cpu().detach().numpy()
+    correlation_matrix = np.corrcoef(gene_expression + 1e-6, rowvar=False)
+    gene_correlation_matrix = np.nan_to_num(correlation_matrix, nan=0, posinf=1, neginf=-1)
+
+    peak_expression = ATAC_data.cpu().detach().numpy()
+    correlation_matrix2 = np.corrcoef(peak_expression + 1e-6, rowvar=False)
+    peak_correlation_matrix = np.nan_to_num(correlation_matrix2, nan=0, posinf=1, neginf=-1)
+
+    gene_correlation_matrix = torch.tensor(gene_correlation_matrix, dtype=torch.float32)
+    peak_correlation_matrix = torch.tensor(peak_correlation_matrix, dtype=torch.float32)
+
+    return gene_correlation_matrix.to(device), peak_correlation_matrix.to(device)
+
+
+def evaluate_ari(cell_embed, adata):
+    """
+        This function is used to evaluate ARI using the lower-dimensional embedding
+        cell_embed of the single-cell data
+        :param cell_embed: a NxK single-cell embedding generated from NMF or scETM
+        :param adata: single-cell AnnData data object (default to to mp_anndata)
+        :return: ARI score of the clustering results produced by Louvain
+    """
+    adata.obsm['cell_embed'] = cell_embed
+    sc.pp.neighbors(adata, use_rep="cell_embed", n_neighbors=30)
+    sc.tl.louvain(adata, resolution=0.15)
+    ari = adjusted_rand_score(adata.obs['Celltype'], adata.obs['louvain'])
+    return ari
+
+
+def evaluate_ari2(cell_embed, adata):
+    adata.obsm['cell_embed'] = cell_embed
+    clustering_func, best_clustering_method, best_n_neighbor = None, None, None
+    clustering_methods = ["leiden"]
+    best_resolution, best_ari, best_nmi = 0, 0, 0
+    resolutions = [0.15]
+    n_neighbors = [30]
+    # resolutions = [0.15, 0.20]
+    # n_neighbors = [30, 50]
+    for n_neighbor in n_neighbors:
+        sc.pp.neighbors(adata, use_rep="cell_embed", n_neighbors=n_neighbor)
+        for clustering_method in clustering_methods:
+            if clustering_method == 'louvain':
+                clustering_func = sc.tl.louvain
+
+            if clustering_method == 'leiden':
+                clustering_func = sc.tl.leiden
+
+            for resolution in resolutions:
+                col = f'{clustering_method}'
+                if clustering_func is not None:
+                    clustering_func(adata, resolution=resolution, key_added=col)
+                ari = adjusted_rand_score(adata.obs['Celltype'], adata.obs[col])
+                nmi = normalized_mutual_info_score(adata.obs['Celltype'], adata.obs[col])
+                if ari > best_ari:
+                    best_resolution = resolution
+                    best_ari = ari
+                    best_clustering_method = clustering_method
+                    best_n_neighbor = n_neighbor
+                if nmi > best_nmi:
+                    best_nmi = nmi
+
+    return f'{best_n_neighbor}_{best_clustering_method}_{best_resolution}', best_ari, best_nmi
+
+
+def reparameterize(mu, logvar):
+    std = torch.exp(0.5 * logvar)
+    eps = torch.randn_like(std)
+    return eps.mul_(std).add_(mu)
+
+
+def pretrain(gnn, gnn_decoder, feature_matrix, edge_index, graph_label, num_epochs=1):
+    parameters_pretrain = [{'params': gnn.parameters()},
+                           {'params': gnn_decoder.parameters()}]
+    optimizer = optim.Adam(parameters_pretrain, lr=0.005, weight_decay=1.2e-2)
+    for epochs in range(num_epochs):
+        gnn.train()
+        gnn_decoder.train()
+        optimizer.zero_grad()
+        gnn.zero_grad()
+        gnn_decoder.zero_grad()
+
+        z = gnn(feature_matrix, edge_index)
+        emb = z
+        # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
+
+        EPS = 1e-15
+        recon_graph = gnn_decoder(z, edge_index, sigmoid=True)
+        recon_graph_clone = recon_graph.clone()
+        recon_graph_clone[recon_graph_clone <= 0.8] = 0.0
+        recon_graph_clone[recon_graph_clone > 0.8] = 1.0
+        count_ones = torch.sum(recon_graph_clone == 1).item()
+        # print(count_ones)
+        #MSE
+        mse_loss = torch.mean((graph_label - recon_graph_clone) ** 2)
+
+        pos_loss = -torch.log(recon_graph + EPS).mean()
+        neg_edge_index = None
+        if neg_edge_index is None:
+            neg_edge_index = negative_sampling(edge_index, z.size(0))
+        neg_loss = -torch.log(1 - gnn_decoder(z, neg_edge_index, sigmoid=True) + EPS).mean()
+        recon_loss = pos_loss + neg_loss
+        loss = mse_loss*1000
+        # mse_loss.backward()
+        # optimizer.step()
+        # if epochs % 10 == 0:
+        #     print(torch.sum(loss).item())
+    return emb, loss
+
+
+def split_tensor(tensor, num_rows):
+    """
+    split (gene+peak) x emb tensor to gene x emb tensor and peak x emb tensor
+    """
+    if num_rows >= tensor.shape[0]:
+        raise ValueError("num_rows should be less than tensor's number of rows")
+
+    top_matrix = tensor[:num_rows, :]
+    bottom_matrix = tensor[num_rows:, :]
+
+    return top_matrix, bottom_matrix
+
+
+def calc_weight(
+        epoch: int,
+        n_epochs: int,
+        cutoff_ratio: float = 0.,
+        warmup_ratio: float = 1 / 3,
+        min_weight: float = 0.,
+        max_weight: float = 1e-7
+) -> float:
+    """Calculates weights.
+    Args:
+        epoch: current epoch.
+        n_epochs: the total number of epochs to train the model.
+        cutoff_ratio: ratio of cutoff epochs (set weight to zero) and
+            n_epochs.
+        warmup_ratio: ratio of warmup epochs and n_epochs.
+        min_weight: minimum weight.
+        max_weight: maximum weight.
+    Returns:
+        The current weight of the KL term.
+    """
+
+    fully_warmup_epoch = n_epochs * warmup_ratio
+
+    if epoch < n_epochs * cutoff_ratio:
+        return 0.
+    if warmup_ratio:
+        return max(min(1., epoch / fully_warmup_epoch) * max_weight, min_weight)
+    else:
+        return max_weight
+
+
+def train_one_epoch(encoder1, encoder2, gnn, gnn_decoder, mlp1, mlp2, decoder1, decoder2, optimizer,
+                    RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
+                    feature_matrix, edge_index, graph_label, use_mlp,
+                    use_mask, mask1, mask2, RNA_tensor_copy, ATAC_tensor_copy):
+    encoder1.train()
+    encoder2.train()
+    gnn.train()
+    mlp1.train()
+    mlp2.train()
+    decoder1.train()
+    decoder2.train()
+
+    optimizer.zero_grad()
+    # torch.autograd.set_detect_anomaly(True)
+
+    encoder1.zero_grad()
+    encoder2.zero_grad()
+    gnn.zero_grad()
+    mlp1.zero_grad()
+    mlp2.zero_grad()
+    decoder1.zero_grad()
+    decoder2.zero_grad()
+
+    mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
+    mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
+
+    z1 = reparameterize(mu1, log_sigma1)
+    theta1 = F.softmax(z1, dim=-1)
+
+    z2 = reparameterize(mu2, log_sigma2)
+    theta2 = F.softmax(z2, dim=-1)
+
+    # print(f"theta1:\n {theta1}")
+    # print(f"theta2:\n {theta2}")
+
+    emb, graph_loss = pretrain(gnn, gnn_decoder, feature_matrix, edge_index, graph_label)
+    # emb = gnn(feature_matrix, edge_index)
+    # emb = mlp1(emb)
+    # num_of_peak x emb, num_of_gene x emb
+    # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
+    eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
+
+    if use_mlp:
+        # print("using mlp")
+        rho = mlp1(rho)
+        eta = mlp2(eta)
+    pred_RNA_tensor = decoder1(theta1, rho)
+    pred_ATAC_tensor = decoder2(theta2, eta)
+
+    # pred_RNA_tensor = decoder1(theta1)
+    # pred_ATAC_tensor = decoder2(theta2)
+
+    if use_mask:  # double side mask
+        pred_RNA_tensor = pred_RNA_tensor * mask1
+        pred_ATAC_tensor = pred_ATAC_tensor * mask2
+        X_RNA = RNA_tensor  # masked
+        X_ATAC = ATAC_tensor  # masked
+    else:  # one side mask for reconstructing the masked expressions
+        X_RNA = RNA_tensor_copy  # no masked
+        X_ATAC = ATAC_tensor_copy  # no masked
+
+    """
+    modify loss here
+    """
+
+    recon_loss1 = -(pred_RNA_tensor * X_RNA).sum(-1)
+    recon_loss2 = -(pred_ATAC_tensor * X_ATAC).sum(-1)
+    recon_loss = (recon_loss1 + recon_loss2).mean()
+    kl_loss = kl_theta1 + kl_theta2
+    # kl_loss *= 10
+
+    # loss = recon_loss + kl_loss * kl_weight
+    loss = recon_loss + kl_loss+ graph_loss
+    loss.backward()
+
+    clamp_num = 2.0
+    torch.nn.utils.clip_grad_norm_(encoder1.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(encoder2.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(gnn.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(mlp1.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(mlp2.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(decoder1.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(decoder2.parameters(), clamp_num)
+
+    optimizer.step()
+
+    return torch.sum(loss).item()
+
+
+# get sample encoding theta from the trained encoder network
+def get_theta_GNN(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, RNA_tensor_normalized,
+                  ATAC_tensor_normalized, metric):
+    encoder1.eval()
+    encoder2.eval()
+    gnn.eval()
+    mlp1.eval()
+    mlp2.eval()
+    decoder1.eval()
+    decoder2.eval()
+
+    with torch.no_grad():
+        mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
+        mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
+
+        z1 = reparameterize(mu1, log_sigma1)
+        theta1 = F.softmax(z1, dim=-1)
+
+        z2 = reparameterize(mu2, log_sigma2)
+        theta2 = F.softmax(z2, dim=-1)
+
+        """
+        change metric here, theta or mu
+        """
+        rate1 = 0.5
+        rate2 = 0.5
+
+        theta = None
+        if metric == 'theta':
+            theta = rate1 * theta1 + rate2 * theta2
+        if metric == 'mu':
+            theta = rate1 * mu1 + rate2 * mu2
+
+        return theta, theta1, theta2
+
+
+def get_beta_GNN(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
+                 RNA_tensor_normalized, ATAC_tensor_normalized,
+                 feature_matrix, edge_index, use_mlp):
+    encoder1.eval()
+    encoder2.eval()
+    gnn.eval()
+    mlp1.eval()
+    mlp2.eval()
+    decoder1.eval()
+    decoder2.eval()
+
+    with torch.no_grad():
+        mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
+        mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
+
+        z1 = reparameterize(mu1, log_sigma1)
+        theta1 = F.softmax(z1, dim=-1)
+
+        z2 = reparameterize(mu2, log_sigma2)
+        theta2 = F.softmax(z2, dim=-1)
+
+        emb = gnn(feature_matrix, edge_index)
+        new_emb = mlp1(emb)
+        # num_of_peak x emb, num_of_gene x emb
+        # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
+        eta, rho = split_tensor(new_emb, ATAC_tensor_normalized.shape[1])
+
+        pred_gene_gene = torch.mm(rho, rho.t())
+        pred_gene_gene = torch.log(pred_gene_gene + 1e-6)
+
+        pred_peak_peak = torch.mm(eta, eta.t())
+        pred_peak_peak = torch.log(pred_peak_peak + 1e-6)
+        if use_mlp:
+            rho = mlp1(rho)
+            eta = mlp2(eta)
+        pred_RNA_tensor = decoder1(theta1, rho)
+        pred_ATAC_tensor = decoder2(theta2, eta)
+
+        beta1 = decoder1.get_beta()
+        beta2 = decoder2.get_beta()
+
+        return beta1, beta2
+
+
+def train(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
+          optimizer, RNA_tensor, RNA_tensor_normalized,
+          ATAC_tensor, ATAC_tensor_normalized, feature_matrix, edge_index,
+          gene_gene, peak_peak, adata, adata2, metric, ari_freq, niter=100):
+    perf = np.ndarray(shape=(niter, 2), dtype='float')
+    num_of_ari = int(niter / ari_freq)
+    ari_perf = np.ndarray(shape=(num_of_ari, 4), dtype='float')
+    best_ari = 0
+    best_theta = None
+    best_beta_gene = None
+    best_beta_peak = None
+    # WRITE YOUR CODE HERE
+    for i in range(niter):
+        kl_weight = calc_weight(i, niter, 0, 1 / 3, 1e-2, 4)
+        NELBO = train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2, optimizer, RNA_tensor,
+                                RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
+                                feature_matrix, edge_index, gene_gene, peak_peak, kl_weight)
+
+        theta, theta_gene, theta_peak = get_theta_GNN(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
+                                                      RNA_tensor_normalized, ATAC_tensor_normalized, metric)
+        beta_gene, beta_peak = get_beta_GNN(encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
+                                            RNA_tensor_normalized, ATAC_tensor_normalized,
+                                            feature_matrix, edge_index)
+        perf[i, 0] = i
+        perf[i, 1] = NELBO
+        if i % ari_freq == 0:
+            ari = evaluate_ari(theta.to('cpu'), adata)
+            ari1 = evaluate_ari(theta_gene.to('cpu'), adata)
+            ari2 = evaluate_ari(theta_peak.to('cpu'), adata)
+            idx = (int)(i / ari_freq)
+            ari_perf[idx, 0] = idx
+            ari_perf[idx, 1] = ari
+            ari_perf[idx, 2] = ari1
+            ari_perf[idx, 3] = ari2
+            print("iter: " + str(i) + " ari: " + str(ari))
+
+            if best_ari < ari:
+                best_ari = ari
+                best_theta = theta
+                best_beta_gene = beta_gene
+                best_beta_peak = beta_peak
+        else:
+            if i % 100 == 0:
+                print("iter: " + str(i))
+
+    return encoder1, encoder2, gnn, decoder1, decoder2, perf, ari_perf, \
+        best_ari, best_theta, best_beta_gene, best_beta_peak
+
+
+def monitor_perf(perf, ari_perf, ari_freq, objective, path):
+    niter = []
+    ari_niter = []
+    mse = []
+    ari = []
+    ari1 = []
+    ari2 = []
+    for i in range(len(perf)):
+        niter.append(perf[i][0])
+        mse.append(perf[i][1])
+    for i in range(len(ari_perf)):
+        ari_niter.append(ari_perf[i][0] * ari_freq)
+        ari.append(ari_perf[i][1])
+        ari1.append(ari_perf[i][2])
+        ari2.append(ari_perf[i][3])
+    if objective == "both":
+        print(path + 'BOTH_ARI.png')
+        plt.plot(ari_niter, ari, label="scGraphETM", color='red')
+        # plt.plot(ari_niter, ari1, label="scETM_RNA", color='black')
+        # plt.plot(ari_niter, ari2, label="scETM_ATAC", color='blue')
+        plt.legend()
+        # plt.title("ARI comparison on scGraphETM and scETM")
+        plt.title("ARI of scGraphETM")
+        plt.xlabel("iter")
+        plt.ylabel("ARI")
+        plt.ylim(0, 1)
+        # plt.show()
+        plt.savefig(path + 'BOTH_ARI.png')
+    if objective == "NELBO":
+        plt.plot(niter, mse)
+        plt.xlabel("iter")
+        plt.ylabel("NELBO")
+        # plt.show()
+        plt.savefig(path + 'NELBO.png')
+    if objective == "ARI":
+        plt.plot(ari_niter, ari)
+        plt.xlabel("iter")
+        plt.ylabel("ARI")
+        plt.show()
+    if objective == "ARI1":
+        plt.plot(ari_niter, ari1)
+        plt.xlabel("iter")
+        plt.ylabel("ARI1")
+        plt.show()
+    if objective == "ARI2":
+        plt.plot(ari_niter, ari2)
+        plt.xlabel("iter")
+        plt.ylabel("ARI2")
+        plt.show()
+    return
+
+def prior_expert(size, use_cuda=False):
+    mu = Variable(torch.zeros(size))
+    logvar = Variable(torch.zeros(size))
+    if use_cuda:
+        mu, logvar = mu.cuda(), logvar.cuda()
+    return mu, logvar
+
+
+def experts(mu, logsigma, eps=1e-8):
+    var = torch.exp(2 * logsigma) + eps
+    T = 1. / (var + eps)
+    pd_mu = torch.sum(mu * T, dim=0) / torch.sum(T, dim=0)
+    pd_var = 1. / torch.sum(T, dim=0)
+    pd_logsigma = 0.5 * torch.log(pd_var + eps)
+    return pd_mu, pd_logsigma
+
+
+def train_one_epoch_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, optimizer,
+                        RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
+                        feature_matrix, edge_index, use_mlp,
+                        use_mask, mask1, mask2, RNA_tensor_copy, ATAC_tensor_copy):
+    encoder1.train()
+    encoder2.train()
+    gnn.train()
+    mlp1.train()
+    mlp2.train()
+    pog_decoder.train()
+
+    optimizer.zero_grad()
+
+    encoder1.zero_grad()
+    encoder2.zero_grad()
+    gnn.zero_grad()
+    mlp1.zero_grad()
+    mlp2.zero_grad()
+    pog_decoder.zero_grad()
+
+    mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
+    mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
+
+    # mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
+    # Mu = torch.cat((mu_prior, mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
+    # Log_sigma = torch.cat((logsigma_prior, log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
+
+    Mu = torch.cat((mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
+    Log_sigma = torch.cat((log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
+
+    mu, log_sigma = experts(Mu, Log_sigma)
+
+    Theta = F.softmax(reparameterize(mu, log_sigma), dim=-1)
+
+    emb = gnn(feature_matrix, edge_index)
+    emb = mlp1(emb)
+    # num_of_peak x emb, num_of_gene x emb
+    # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
+    eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
+
+    pred_gene_gene = torch.sigmoid(torch.mm(rho, rho.t()))
+    nan_mask = torch.isnan(pred_gene_gene)
+    pred_gene_gene[nan_mask] = 1
+
+    pred_peak_peak = torch.sigmoid(torch.mm(eta, eta.t()))
+    nan_mask = torch.isnan(pred_peak_peak)
+    pred_peak_peak[nan_mask] = 1
+
+    if use_mlp:
+        rho = mlp1(rho)
+        eta = mlp2(eta)
+    pred_RNA_tensor, pred_ATAC_tensor = pog_decoder(Theta, rho, eta)
+    # pred_RNA_tensor, pred_ATAC_tensor = pog_decoder(Theta)
+
+    if use_mask:  # double side mask
+        pred_RNA_tensor = pred_RNA_tensor * mask1
+        pred_ATAC_tensor = pred_ATAC_tensor * mask2
+        X_RNA = RNA_tensor  # masked
+        X_ATAC = ATAC_tensor  # masked
+    else:  # one side mask for reconstructing the masked expressions
+        X_RNA = RNA_tensor_copy  # no masked
+        X_ATAC = ATAC_tensor_copy  # no masked
+
+    """
+    modify loss here
+    """
+
+    recon_loss1 = -(pred_RNA_tensor * X_RNA).sum(-1)
+    recon_loss2 = -(pred_ATAC_tensor * X_ATAC).sum(-1)
+    recon_loss = (recon_loss1 + recon_loss2).mean()
+    kl_loss = kl_theta1 + kl_theta2
+    # kl_loss *= 10
+
+    # loss = recon_loss + kl_loss * kl_weight
+    loss = recon_loss + kl_loss
+    loss.backward()
+
+    clamp_num = 50.0
+    torch.nn.utils.clip_grad_norm_(encoder1.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(encoder2.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(gnn.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(mlp1.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(mlp2.parameters(), clamp_num)
+    torch.nn.utils.clip_grad_norm_(pog_decoder.parameters(), clamp_num)
+
+    optimizer.step()
+
+    return torch.sum(loss).item()
+
+
+def get_theta_GNN_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder, RNA_tensor_normalized,
+                      ATAC_tensor_normalized, metric):
+    encoder1.eval()
+    encoder2.eval()
+    gnn.eval()
+    mlp1.eval()
+    mlp2.eval()
+    pog_decoder.eval()
+
+    with torch.no_grad():
+        mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
+        mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
+
+        # mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
+        # Mu = torch.cat((mu_prior, mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
+        # Log_sigma = torch.cat((logsigma_prior, log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
+
+        Mu = torch.cat((mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
+        Log_sigma = torch.cat((log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
+
+        mu, log_sigma = experts(Mu, Log_sigma)
+
+        Theta = F.softmax(reparameterize(mu, log_sigma), dim=-1)
+
+        """
+        change metric here, theta or mu
+        """
+        rate1 = 0.5
+        rate2 = 0.5
+
+        theta = None
+        if metric == 'theta':
+            theta = Theta
+        if metric == 'mu':
+            theta = mu
+
+        return theta
+
+
+def get_beta_GNN_pog(encoder1, encoder2, gnn, mlp1, mlp2, pog_decoder,
+                     RNA_tensor_normalized, ATAC_tensor_normalized,
+                     feature_matrix, edge_index, use_mlp):
+    encoder1.eval()
+    encoder2.eval()
+    gnn.eval()
+    mlp1.eval()
+    mlp2.eval()
+    pog_decoder.eval()
+
+    with torch.no_grad():
+        mu1, log_sigma1, kl_theta1 = encoder1(RNA_tensor_normalized)
+        mu2, log_sigma2, kl_theta2 = encoder2(ATAC_tensor_normalized)
+
+        # mu_prior, logsigma_prior = prior_expert((1, RNA_tensor_normalized.shape[0], mu1.shape[1]), use_cuda=True)
+        # Mu = torch.cat((mu_prior, mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
+        # Log_sigma = torch.cat((logsigma_prior, log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
+
+        Mu = torch.cat((mu1.unsqueeze(0), mu2.unsqueeze(0)), dim=0)
+        Log_sigma = torch.cat((log_sigma1.unsqueeze(0), log_sigma2.unsqueeze(0)), dim=0)
+
+        mu, log_sigma = experts(Mu, Log_sigma)
+
+        Theta = F.softmax(reparameterize(mu, log_sigma), dim=-1)
+
+        emb = gnn(feature_matrix, edge_index)
+        new_emb = mlp1(emb)
+        # num_of_peak x emb, num_of_gene x emb
+        # eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
+        eta, rho = split_tensor(new_emb, ATAC_tensor_normalized.shape[1])
+
+        pred_gene_gene = torch.mm(rho, rho.t())
+        pred_gene_gene = torch.log(pred_gene_gene + 1e-6)
+
+        pred_peak_peak = torch.mm(eta, eta.t())
+        pred_peak_peak = torch.log(pred_peak_peak + 1e-6)
+
+        if use_mlp:
+            rho = mlp1(rho)
+            eta = mlp2(eta)
+
+        pred_RNA_tensor = pog_decoder(Theta, rho, eta)
+
+        beta1, beta2 = pog_decoder.get_beta()
+
+        return beta1, beta2
