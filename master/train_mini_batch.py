@@ -140,8 +140,9 @@ if __name__ == "__main__":
     test_num_of_cell = total_cell_num - num_of_cell
     batch_num = 10
     batch_size = int(num_of_cell / batch_num)
-    emb_size = 512
-    emb_size2 = 512
+    emb_size = 600
+    emb_size2 = 600
+    emb_graph = num_of_cell
     num_of_topic = 40
     gnn_conv = 'GATv2'
     num_epochs = 500
@@ -156,7 +157,10 @@ if __name__ == "__main__":
     use_noise = False
     noise_ratio = 0.2
 
-    mtx_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
+    # mtx_path = '../data/relation_by_score/top5_peak_tf_gene.pickle'
+    # mtx_path = '../data/relation2/top5_peak_tf_gene.pickle'
+    # mtx_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
+    mtx_path = '../data/gene_peak/top5peak_gene.pickle'
     result, edge_index = helper2.get_sub_graph_by_index(
         path=mtx_path,
         gene_index_list=gene_index_list,
@@ -164,13 +168,14 @@ if __name__ == "__main__":
         total_peak=total_peak
     )
 
-    # cor_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
+    # mtx_path = '../data/relation2/top5_peak_tf_gene.pickle'
     # result, edge_index = helper2.get_sub_graph(
-    #     path=cor_path,
+    #     path=mtx_path,
     #     num_gene=num_of_gene,
     #     num_peak=num_of_peak,
     #     total_peak=total_peak
     # )
+    # print(len(edge_index[0]))
 
 
     if torch.cuda.is_available():
@@ -207,7 +212,7 @@ if __name__ == "__main__":
 
     encoder1 = model2.VAE(num_of_gene, emb_size, num_of_topic).to(device)
     encoder2 = model2.VAE(num_of_peak, emb_size, num_of_topic).to(device)
-    gnn = model2.GNN(emb_size2, emb_size2 * 4, emb_size2, 1, device, 0, gnn_conv).to(device)
+    gnn = model2.GNN(emb_graph, emb_size2 * 4, emb_size2, 1, device, 0, gnn_conv).to(device)
     mlp1 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
     mlp2 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
     graph_dec = model2.DEC(emb_size2, emb_size2 * 4, num_of_peak+num_of_gene).to(device)

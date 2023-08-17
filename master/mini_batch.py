@@ -8,7 +8,7 @@ import scanpy as sc
 import numpy as np
 import matplotlib.pyplot as plt
 import select_gpu
-from scipy.sparse import vstack, hstack
+from scipy.sparse import vstack, hstack, csc_matrix, diags
 import pickle
 
 
@@ -52,12 +52,30 @@ def add_noise(tensor, noise_rate):
     return tensor
 
 
+def normalize_columns(matrix):
+    col_sums = matrix.sum(axis=0)
+    col_sums[col_sums == 0] = 1
+    inv_col_sums = 1 / col_sums
+    inv_diag_matrix = diags(inv_col_sums.A1)
+    normalized_matrix = matrix * inv_diag_matrix
+    return normalized_matrix
+
+
 def generate_feature_matrix(scRNA_adata, scATAC_adata, num_of_cell, num_of_gene, num_of_peak):
     gene_exp = scRNA_adata.X[:num_of_cell, :num_of_gene].transpose()
     peak_exp = scATAC_adata.X[:num_of_cell, :num_of_peak].transpose()
+
+    # gene_exp = normalize_columns(gene_exp)
+    # peak_exp = normalize_columns(peak_exp)
+
     feature_matrix_sparse = vstack([peak_exp, gene_exp])
     feature_matrix_dense = feature_matrix_sparse.A
     feature_matrix_tensor = torch.from_numpy(feature_matrix_dense)
+    # print(feature_matrix_tensor.max(), feature_matrix_tensor.min())
+
+    # random_feature_matrix = torch.randn((feature_matrix_tensor.shape[0], feature_matrix_tensor.shape[1]))
+    # feature_matrix_tensor = feature_matrix_tensor * random_feature_matrix
+    # print(random_feature_matrix.max(), random_feature_matrix.min())
     return feature_matrix_tensor
 
 
@@ -143,8 +161,9 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
                             use_mask=False, mask_ratio=0.2,
                             use_noise=True, noise_ratio=0.2):
     print("======  start processing data  ======")
-    feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
-    # feature_matrix = generate_feature_matrix(scRNA_adata, scATAC_adata, num_of_cell, num_of_gene, num_of_peak)
+    # feature_matrix = torch.randn((num_of_peak + num_of_gene, emb_size))
+    feature_matrix = generate_feature_matrix(scRNA_adata, scATAC_adata, num_of_cell, num_of_gene, num_of_peak)
+
     # with open('/home/alainhby/projects/ctb-liyue/alainhby/code/data/feature_matrix/feature_matrix.pickle', 'wb') as f:
     #     pickle.dump(feature_matrix, f)
     training_set = []
