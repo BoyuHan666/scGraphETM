@@ -162,7 +162,7 @@ if __name__ == "__main__":
         total_peak=total_peak
     )
 
-    # cor_path = '../data/TF_gene/top1peak_gene.pickle'
+    # cor_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
     # cor_path = ''
     # cor_path = '../data/TF_gene/top1_peak_tf_gene.pickle'
     # result, edge_index = helper2.get_sub_graph(
