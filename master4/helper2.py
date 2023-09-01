@@ -179,7 +179,7 @@ def split_tensor(tensor, num_rows):
 
     tensor_len = tensor.shape[0]
     top_matrix = tensor[:num_rows, :]
-    bottom_matrix = tensor[num_rows:-1, :]
+    bottom_matrix = tensor[num_rows:, :]
 
     return top_matrix, bottom_matrix
 
@@ -234,7 +234,6 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
     """
     modify loss here
     """
-
     recon_loss1 = -(pred_RNA_tensor * RNA_tensor).sum(-1)
     recon_loss2 = -(pred_ATAC_tensor * ATAC_tensor).sum(-1)
     recon_loss = (recon_loss1 + recon_loss2).mean()

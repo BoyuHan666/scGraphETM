@@ -4,9 +4,8 @@ import anndata
 
 
 def generate_feature_matrix2(atac, rna, random_matrix):
-    concatenated = torch.cat((atac, rna), dim=0)
-    expanded = concatenated.repeat(random_matrix.size(1), 1)
-    return expanded.T*random_matrix
+    concatenated = torch.cat((rna, atac), dim=0).unsqueeze(0).T
+    return concatenated*random_matrix
 
 
 def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
@@ -50,10 +49,10 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
 
         feature_matrix = generate_feature_matrix2(peak_exp_normalized, gene_exp_normalized, random_matrix)
 
-        gene_exp = gene_exp.to(device)
-        gene_exp_normalized = gene_exp_normalized.to(device)
-        peak_exp = peak_exp.to(device)
-        peak_exp_normalized = peak_exp_normalized.to(device)
+        gene_exp = gene_exp.unsqueeze(0).to(device)
+        gene_exp_normalized = gene_exp_normalized.unsqueeze(0).to(device)
+        peak_exp = peak_exp.unsqueeze(0).to(device)
+        peak_exp_normalized = peak_exp_normalized.unsqueeze(0).to(device)
         feature_matrix = feature_matrix.to(device)
 
         training_batch = (gene_exp, gene_exp_normalized, peak_exp, peak_exp_normalized, feature_matrix)
