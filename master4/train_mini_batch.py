@@ -12,11 +12,11 @@ import model2
 
 
 def train(model_tuple, optimizer, train_set, ari_freq, niter, edge_index):
-    NELBO = None
 
     (encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2) = model_tuple
 
     for i in range(niter):
+        NELBO = 0
         for train_batch in train_set:
             (gene_exp, gene_exp_normalized, peak_exp, peak_exp_normalized, feature_matrix) = train_batch
 
@@ -26,11 +26,13 @@ def train(model_tuple, optimizer, train_set, ari_freq, niter, edge_index):
                 feature_matrix, edge_index
             )
 
-            NELBO = recon_loss + kl_loss
+            NELBO += recon_loss + kl_loss
+
+        NELBO /= len(train_set)
 
         if i % ari_freq == 0:
 
-            print('====  Iter: {}, NELBO: {:.4f}, recon_loss: {:.4f}, kl_loss: {:.4f}  ===='.format(i, NELBO, recon_loss, kl_loss))
+            print('====  Iter: {}, NELBO: {:.4f} ===='.format(i, NELBO))
 
     return encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2
 
