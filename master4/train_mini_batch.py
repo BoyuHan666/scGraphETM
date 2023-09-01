@@ -88,7 +88,7 @@ if __name__ == "__main__":
     # )
     # print(len(edge_index[0]))
 
-    num_of_cell = 8000
+    num_of_cell = 1000
     num_of_gene = gene_num
     num_of_peak = peak_num
     test_num_of_cell = total_cell_num - num_of_cell
@@ -124,8 +124,8 @@ if __name__ == "__main__":
     mlp1 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
     mlp2 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
     graph_dec = model2.DEC(emb_size2, emb_size2 * 4, num_of_peak+num_of_gene).to(device)
-    decoder1 = model2.LDEC(num_of_gene, emb_size, num_of_topic, batch_size).to(device)
-    decoder2 = model2.LDEC(num_of_peak, emb_size, num_of_topic, batch_size).to(device)
+    decoder1 = model2.LDEC(num_of_gene, emb_size, num_of_topic).to(device)
+    decoder2 = model2.LDEC(num_of_peak, emb_size, num_of_topic).to(device)
 
     parameters = [{'params': encoder1.parameters()},
                   {'params': encoder2.parameters()},

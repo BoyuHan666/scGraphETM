@@ -105,12 +105,12 @@ class VAE(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(num_modality, emb_size),
             nn.ReLU(),
-            nn.BatchNorm1d(emb_size, eps=1e-5, momentum=0.1),
+            # nn.BatchNorm1d(emb_size, eps=1e-5, momentum=0.1),
             # nn.Dropout(p=0.1),
 
             nn.Linear(emb_size, emb_size),
             nn.ReLU(),
-            nn.BatchNorm1d(emb_size, eps=1e-5, momentum=0.1),
+            # nn.BatchNorm1d(emb_size, eps=1e-5, momentum=0.1),
             nn.Dropout(p=0.1)
         )
 
