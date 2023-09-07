@@ -231,9 +231,12 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
     total_loss = None
     total_recon_loss = None
     total_kl_loss = None
-    for cell in tqdm(range(len(RNA_tensor_normalized))):
+    cell_num = len(RNA_tensor_normalized)
+    for cell in range(cell_num):
         one_cell_RNA_tensor_normalized = RNA_tensor_normalized[cell].unsqueeze(0)
         one_cell_ATAC_tensor_normalized = ATAC_tensor_normalized[cell].unsqueeze(0)
+        one_cell_RNA_tensor = RNA_tensor[cell].unsqueeze(0)
+        one_cell_ATAC_tensor = ATAC_tensor[cell].unsqueeze(0)
         # print(one_cell_RNA_tensor_normalized.shape)
 
         mu1, log_sigma1, kl_theta1 = encoder1(one_cell_RNA_tensor_normalized)
@@ -257,8 +260,8 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
         # num_of_peak x emb, num_of_gene x emb
         eta, rho = split_tensor(act_emb, ATAC_tensor_normalized.shape[1])
 
-        pred_RNA_tensor = decoder1(theta1, rho)
-        pred_ATAC_tensor = decoder2(theta2, eta)
+        one_cell_pred_RNA_tensor = decoder1(theta1, rho)
+        one_cell_pred_ATAC_tensor = decoder2(theta2, eta)
         #
         # pred_RNA_tensor = decoder1(theta1)
         # pred_ATAC_tensor = decoder2(theta2)
@@ -267,9 +270,13 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
         modify loss here
         """
 
-        recon_loss1 = -(pred_RNA_tensor * RNA_tensor).sum(-1)
-        recon_loss2 = -(pred_ATAC_tensor * ATAC_tensor).sum(-1)
-        recon_loss = (recon_loss1 + recon_loss2).mean()
+        recon_loss1 = -(one_cell_pred_RNA_tensor * one_cell_RNA_tensor).sum(-1)
+        # print("============================")
+        # print(one_cell_pred_RNA_tensor.shape)
+        # print(one_cell_RNA_tensor.shape)
+        # print("============================")
+        recon_loss2 = -(one_cell_pred_ATAC_tensor * one_cell_ATAC_tensor).sum(-1)
+        recon_loss = (recon_loss1 + recon_loss2).mean() / cell_num
         kl_loss = kl_theta1 + kl_theta2
 
         loss = recon_loss + kl_loss
