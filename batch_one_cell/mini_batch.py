@@ -1,7 +1,7 @@
 import torch
 import anndata
 import numpy as np
-
+from tqdm import tqdm
 
 def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata, feature_matrix, edge_index, device):
     """
@@ -72,8 +72,8 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
     print("======  start processing data  ======")
     training_set = []
 
-    for i in range(batch_num):
-        print(f"process batches [{i + 1} / {batch_num}]")
+    for i in tqdm(range(batch_num)):
+        # print(f"process batches [{i + 1} / {batch_num}]")
         start = i * batch_size
         end = start + batch_size
         selected_cells = np.array([i for i in range(start, end, 1)])
@@ -134,7 +134,7 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
         edge_index = edge_index.to(device)
 
         training_batch = (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
-                          scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, edge_index, emb_size)
+                          scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, emb_size)
 
         training_set.append(training_batch)
 

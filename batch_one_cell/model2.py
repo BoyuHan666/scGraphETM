@@ -72,10 +72,16 @@ class GNN(nn.Module):
             self.conv2 = GCNConv(hidden_channels, out_channels)
 
     def forward(self, x, edge_index):
-        x, self.a1 = self.conv1(x, edge_index, return_attention_weights=True)
+
+        x = self.conv1(x, edge_index)
         x = F.leaky_relu(x)
-        x, self.a2 = self.conv2(x, edge_index, return_attention_weights=True)
+        x = self.conv2(x, edge_index)
         x = F.leaky_relu(x)
+
+        # x, self.a1 = self.conv1(x, edge_index, return_attention_weights=True)
+        # x = F.leaky_relu(x)
+        # x, self.a2 = self.conv2(x, edge_index, return_attention_weights=True)
+        # x = F.leaky_relu(x)
         self.embedding = x
         return x
 
