@@ -11,11 +11,12 @@ import mini_batch
 import helper2
 import model2
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 def train(model_tuple, optimizer,
           train_set, total_training_set, test_set,
-          random_matrix, ari_freq, niter, device):
+          random_matrix, edge_index, ari_freq, niter, device):
     NELBO = None
     best_ari = 0
     best_train_ari = 0
@@ -41,9 +42,9 @@ def train(model_tuple, optimizer,
 
     for i in range(niter):
 
-        for train_batch in train_set:
+        for train_batch in tqdm(train_set):
             (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
-             scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, edge_index, emb_size) = train_batch
+             scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, emb_size) = train_batch
 
             recon_loss, kl_loss = helper2.train_one_epoch(
                 encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2, optimizer, X_rna_tensor,
@@ -53,7 +54,7 @@ def train(model_tuple, optimizer,
 
             NELBO = recon_loss + kl_loss
 
-        if i % ari_freq == 0:
+        if (i+1) % ari_freq == 0:
             # with torch.no_grad():
             theta, theta_gene, theta_peak = helper2.get_theta_GNN(
                 encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
@@ -74,7 +75,7 @@ def train(model_tuple, optimizer,
             print('====  Iter: {}, NELBO: {:.4f}, recon_loss: {:.4f}, kl_loss: {:.4f}  ====\n'
                   'Train res: {}\t Train ARI: {:.4f}\t Train NMI: {:.4f}\n'
                   'Valid res: {}\t Valid ARI: {:.4f}\t Valid NMI: {:.4f}\n'
-                  .format(i, NELBO, recon_loss, kl_loss,
+                  .format(i+1, NELBO, recon_loss, kl_loss,
                           res_train, ari_train, nmi_train,
                           res, ari, nmi)
                   )
@@ -85,9 +86,6 @@ def train(model_tuple, optimizer,
             if best_train_ari < ari_train:
                 best_train_ari = ari_train
                 best_train_theta = theta_train
-        else:
-            if i % 100 == 0:
-                print("Iter: " + str(i))
 
     return (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
             best_ari, best_theta, best_beta_gene, best_beta_peak,
@@ -124,7 +122,7 @@ if __name__ == "__main__":
     num_of_gene = gene_num
     num_of_peak = peak_num
     test_num_of_cell = total_cell_num - num_of_cell
-    batch_num = 10
+    batch_num = 500
     batch_size = int(num_of_cell / batch_num)
     emb_size = 512
     emb_size2 = 512
@@ -133,7 +131,7 @@ if __name__ == "__main__":
     num_of_topic = 40
     gnn_conv = 'GATv2'
     num_epochs = 100
-    ari_freq = 10
+    ari_freq = 2
     plot_path_rel = "./plot/"
     lr = 0.001
 
@@ -222,6 +220,7 @@ if __name__ == "__main__":
         total_training_set=total_training_set,
         test_set=test_set,
         random_matrix=fm,
+        edge_index=edge_index.to(device),
         ari_freq=ari_freq,
         niter=num_epochs,
         device=device,

@@ -201,7 +201,7 @@ def split_tensor(tensor, num_rows):
 def generate_feature_matrix(gene_exp_normalized, peak_exp_normalized, emb_size, random_matrix, device):
     concatenated = torch.cat((peak_exp_normalized.T,gene_exp_normalized.T), dim=0)
     feature_matrix = random_matrix.to(device) * concatenated.repeat(1, emb_size).to(device)
-    return feature_matrix
+    return random_matrix.to(device)
 
 
 def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2, optimizer,
@@ -228,10 +228,14 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
     decoder1.zero_grad()
     decoder2.zero_grad()
 
-    total_loss = None
-    total_recon_loss = None
-    total_kl_loss = None
     cell_num = len(RNA_tensor_normalized)
+    rna_tensor_list = []
+    atac_tensor_list = []
+    rna_log_sigma_list = []
+    rna_mu_list = []
+    atac_log_sigma_list = []
+    atac_mu_list = []
+
     for cell in range(cell_num):
         one_cell_RNA_tensor_normalized = RNA_tensor_normalized[cell].unsqueeze(0)
         one_cell_ATAC_tensor_normalized = ATAC_tensor_normalized[cell].unsqueeze(0)
@@ -239,8 +243,13 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
         one_cell_ATAC_tensor = ATAC_tensor[cell].unsqueeze(0)
         # print(one_cell_RNA_tensor_normalized.shape)
 
-        mu1, log_sigma1, kl_theta1 = encoder1(one_cell_RNA_tensor_normalized)
-        mu2, log_sigma2, kl_theta2 = encoder2(one_cell_ATAC_tensor_normalized)
+        mu1, log_sigma1, _ = encoder1(one_cell_RNA_tensor_normalized)
+        mu2, log_sigma2, _ = encoder2(one_cell_ATAC_tensor_normalized)
+
+        rna_mu_list.append(mu1)
+        atac_mu_list.append(mu2)
+        rna_log_sigma_list.append(log_sigma1)
+        atac_log_sigma_list.append(log_sigma2)
 
         z1 = reparameterize(mu1, log_sigma1)
         theta1 = F.softmax(z1, dim=-1)
@@ -255,41 +264,40 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
         # print(feature_matrix.shape)
         # (gene + peak) x emb
         emb = gnn(feature_matrix, edge_index)
-        act_emb = mlp1(emb)
+        # act_emb = mlp1(emb)
 
         # num_of_peak x emb, num_of_gene x emb
-        eta, rho = split_tensor(act_emb, ATAC_tensor_normalized.shape[1])
+        eta, rho = split_tensor(emb, ATAC_tensor_normalized.shape[1])
 
         one_cell_pred_RNA_tensor = decoder1(theta1, rho)
         one_cell_pred_ATAC_tensor = decoder2(theta2, eta)
-        #
-        # pred_RNA_tensor = decoder1(theta1)
-        # pred_ATAC_tensor = decoder2(theta2)
+        # #
+        # one_cell_pred_RNA_tensor = decoder1(theta1)
+        # one_cell_pred_ATAC_tensor = decoder2(theta2)
 
-        """
-        modify loss here
-        """
+        rna_tensor_list.append(one_cell_pred_RNA_tensor)
+        atac_tensor_list.append(one_cell_pred_ATAC_tensor)
 
-        recon_loss1 = -(one_cell_pred_RNA_tensor * one_cell_RNA_tensor).sum(-1)
-        # print("============================")
-        # print(one_cell_pred_RNA_tensor.shape)
-        # print(one_cell_RNA_tensor.shape)
-        # print("============================")
-        recon_loss2 = -(one_cell_pred_ATAC_tensor * one_cell_ATAC_tensor).sum(-1)
-        recon_loss = (recon_loss1 + recon_loss2).mean() / cell_num
-        kl_loss = kl_theta1 + kl_theta2
+    """
+    modify loss here
+    """
+    pred_RNA_tensor = torch.cat(rna_tensor_list, dim=0)
+    pred_ATAC_tensor = torch.cat(atac_tensor_list, dim=0)
+    rna_mu = torch.cat(rna_mu_list)
+    atac_mu = torch.cat(atac_mu_list)
+    rna_log_sigma = torch.cat(rna_log_sigma_list)
+    atac_log_sigma = torch.cat(atac_log_sigma_list)
 
-        loss = recon_loss + kl_loss
-        if total_loss is None:
-            total_loss = loss
-            total_recon_loss = recon_loss
-            total_kl_loss = kl_loss
-        else:
-            total_loss += loss
-            total_recon_loss += recon_loss
-            total_kl_loss += kl_loss
+    kl_theta1 = -0.5 * torch.sum(1 + rna_log_sigma - rna_mu.pow(2) - rna_log_sigma.exp(), dim=-1).mean()
+    kl_theta2 = -0.5 * torch.sum(1 + atac_log_sigma - atac_mu.pow(2) - atac_log_sigma.exp(), dim=-1).mean()
 
-    total_loss.backward()
+    recon_loss1 = -(pred_RNA_tensor * RNA_tensor).sum(-1)
+    recon_loss2 = -(pred_ATAC_tensor * ATAC_tensor).sum(-1)
+    recon_loss = (recon_loss1 + recon_loss2).mean()
+    kl_loss = (kl_theta1 + kl_theta2)
+    loss = recon_loss + kl_loss
+
+    loss.backward()
 
     clamp_num = 2.0
     torch.nn.utils.clip_grad_norm_(encoder1.parameters(), clamp_num)
@@ -303,8 +311,8 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
 
     optimizer.step()
 
-    return total_recon_loss.item(), total_kl_loss.item()
-    # return torch.sum(recon_loss).item(), torch.sum(kl_loss).item()
+    # return total_recon_loss.item(), total_kl_loss.item()
+    return torch.sum(recon_loss).item(), torch.sum(kl_loss).item()
 
 
 # get sample encoding theta from the trained encoder network
