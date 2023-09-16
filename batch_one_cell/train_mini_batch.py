@@ -5,6 +5,7 @@ import warnings
 from numba.core.errors import NumbaDeprecationWarning
 import anndata
 import numpy as np
+import pickle
 
 import select_gpu
 import mini_batch
@@ -12,11 +13,13 @@ import helper2
 import model2
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import os
 
 
 def train(model_tuple, optimizer,
           train_set, total_training_set, test_set,
-          random_matrix, edge_index, ari_freq, niter, device):
+          random_matrix, edge_index, ari_freq, niter,
+          device, param_savepath, best_ari_path):
     NELBO = None
     best_ari = 0
     best_train_ari = 0
@@ -26,6 +29,7 @@ def train(model_tuple, optimizer,
     best_beta_peak = None
     ari_trains = []
     ari_tests = []
+    loss_set = []
 
     (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
      X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
@@ -40,6 +44,22 @@ def train(model_tuple, optimizer,
 
     (encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2) = model_tuple
 
+    if os.path.exists(param_savepath):
+        state_dicts = torch.load(param_savepath)
+        encoder1.load_state_dict(state_dicts['encoder1'])
+        encoder2.load_state_dict(state_dicts['encoder2'])
+        gnn.load_state_dict(state_dicts['gnn'])
+        mlp1.load_state_dict(state_dicts['mlp1'])
+        mlp2.load_state_dict(state_dicts['mlp2'])
+        graph_dec.load_state_dict(state_dicts['graph_dec'])
+        decoder1.load_state_dict(state_dicts['decoder1'])
+        decoder2.load_state_dict(state_dicts['decoder2'])
+        print("load params successful")
+    if os.path.exists(best_ari_path):
+        with open(best_ari_path, 'rb') as file:
+            best_train_ari = pickle.load(file)
+        print(f"previous best_train_ari is {best_train_ari}")
+
     for i in range(niter):
 
         for train_batch in tqdm(train_set):
@@ -49,7 +69,7 @@ def train(model_tuple, optimizer,
             recon_loss, kl_loss = helper2.train_one_epoch(
                 encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2, optimizer, X_rna_tensor,
                 X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
-                edge_index, emb_size, random_matrix, device
+                edge_index, emb_size, random_matrix, device, i, niter
             )
 
             NELBO = recon_loss + kl_loss
@@ -71,6 +91,7 @@ def train(model_tuple, optimizer,
 
             ari_trains.append(ari_train)
             ari_tests.append(ari)
+            loss_set.append(NELBO)
 
             print('====  Iter: {}, NELBO: {:.4f}, recon_loss: {:.4f}, kl_loss: {:.4f}  ====\n'
                   'Train res: {}\t Train ARI: {:.4f}\t Train NMI: {:.4f}\n'
@@ -83,13 +104,27 @@ def train(model_tuple, optimizer,
             if best_ari < ari:
                 best_ari = ari
                 best_theta = theta
+
             if best_train_ari < ari_train:
                 best_train_ari = ari_train
                 best_train_theta = theta_train
+                torch.save({
+                    'encoder1': encoder1.state_dict(),
+                    'encoder2': encoder2.state_dict(),
+                    'gnn': gnn.state_dict(),
+                    'mlp1': mlp1.state_dict(),
+                    'mlp2': mlp2.state_dict(),
+                    'graph_dec': graph_dec.state_dict(),
+                    'decoder1': decoder1.state_dict(),
+                    'decoder2': decoder2.state_dict()
+                }, param_savepath)
+                with open(best_ari_path, 'wb') as file:
+                    pickle.dump(best_train_ari, file)
+                print("save params successful!")
 
     return (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
             best_ari, best_theta, best_beta_gene, best_beta_peak,
-            best_train_ari, best_train_theta, ari_trains, ari_tests)
+            best_train_ari, best_train_theta, ari_trains, ari_tests, loss_set)
 
 
 if __name__ == "__main__":
@@ -124,17 +159,21 @@ if __name__ == "__main__":
     test_num_of_cell = total_cell_num - num_of_cell
     batch_num = 500
     batch_size = int(num_of_cell / batch_num)
-    emb_size = 512
-    emb_size2 = 512
+    emb_size = 256
+    emb_size2 = 256
     # emb_graph = num_of_cell
     emb_graph = emb_size2
-    num_of_topic = 40
+    num_of_topic = 20
     gnn_conv = 'GATv2'
-    num_epochs = 100
+    num_epochs = 40
     ari_freq = 2
     plot_path_rel = "./plot/"
     lr = 0.001
+    param_savepath = f"./model_params/best_model_{emb_size2}.pth"
+    best_ari_path = f"./model_params/best_ari_{emb_size2}.pkl"
 
+
+    print(f"num_of_topic: {num_of_topic}")
     # mtx_path = '../data/relation_by_score/top5_peak_tf_gene.pickle'
     # mtx_path = '../data/relation2/top5_peak_tf_gene.pickle'
     # mtx_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
@@ -186,7 +225,7 @@ if __name__ == "__main__":
 
     encoder1 = model2.VAE(num_of_gene, emb_size, num_of_topic).to(device)
     encoder2 = model2.VAE(num_of_peak, emb_size, num_of_topic).to(device)
-    gnn = model2.GNN(emb_graph, emb_size2 * 4, emb_size2, 1, device, 0, gnn_conv).to(device)
+    gnn = model2.GNN(emb_size2, emb_size2 * 2, emb_size2, 1, device, 0, gnn_conv).to(device)
     mlp1 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
     mlp2 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
     graph_dec = model2.DEC(emb_size2, emb_size2 * 4, num_of_peak+num_of_gene).to(device)
@@ -203,7 +242,7 @@ if __name__ == "__main__":
                   {'params': decoder2.parameters()}
                   ]
 
-    optimizer = optim.Adam(parameters, lr=lr, weight_decay=1.2e-6)
+    optimizer = optim.AdamW(parameters, lr=lr, weight_decay=1.2e-6)
 
     model_tuple = (encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2)
     for model in model_tuple:
@@ -213,7 +252,7 @@ if __name__ == "__main__":
     st = time.time()
     (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
      best_ari, best_theta, best_beta_gene, best_beta_peak,
-     best_train_ari, best_train_theta, ari_trains, ari_tests) = train(
+     best_train_ari, best_train_theta, ari_trains, ari_tests, loss_set) = train(
         model_tuple=model_tuple,
         optimizer=optimizer,
         train_set=training_set,
@@ -224,6 +263,8 @@ if __name__ == "__main__":
         ari_freq=ari_freq,
         niter=num_epochs,
         device=device,
+        param_savepath=param_savepath,
+        best_ari_path=best_ari_path,
     )
     ed = time.time()
     print(f"training time: {ed - st}")
@@ -231,6 +272,7 @@ if __name__ == "__main__":
     print(f"best_train_ari: {best_train_ari}, best_val_ari: {best_ari}")
     print(ari_trains)
     print(ari_tests)
+    print(loss_set)
 
     # a1, a2 = gnn.get_attention()
     # print(a2[1])
