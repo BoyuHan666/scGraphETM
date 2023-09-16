@@ -199,14 +199,21 @@ def split_tensor(tensor, num_rows):
 
 
 def generate_feature_matrix(gene_exp_normalized, peak_exp_normalized, emb_size, random_matrix, device):
-    concatenated = torch.cat((peak_exp_normalized.T,gene_exp_normalized.T), dim=0)
-    feature_matrix = random_matrix.to(device) * concatenated.repeat(1, emb_size).to(device)
-    return random_matrix.to(device)
+    concatenated = torch.cat((peak_exp_normalized.T, gene_exp_normalized.T), dim=0)
+    org_feature_matrix = random_matrix.to(device) * concatenated.repeat(1, emb_size).to(device)
+    non_zero_mask = concatenated != 0
+    concatenated[non_zero_mask] = 1
+    binary_feature_matrix = random_matrix.to(device) * concatenated.repeat(1, emb_size).to(device)
+
+    # feature_matrix = random_matrix.to(device) + concatenated.repeat(1, emb_size).to(device)
+    feature_matrix = random_matrix.to(device) + org_feature_matrix
+    # feature_matrix = random_matrix.to(device) + binary_feature_matrix
+    return feature_matrix
 
 
 def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, decoder2, optimizer,
                     RNA_tensor, RNA_tensor_normalized, ATAC_tensor, ATAC_tensor_normalized,
-                    edge_index, emb_size, random_matrix, device):
+                    edge_index, emb_size, random_matrix, device, current_epoch, epochs):
     encoder1.train()
     encoder2.train()
     gnn.train()
@@ -295,6 +302,7 @@ def train_one_epoch(encoder1, encoder2, gnn, mlp1, mlp2, graph_dec, decoder1, de
     recon_loss2 = -(pred_ATAC_tensor * ATAC_tensor).sum(-1)
     recon_loss = (recon_loss1 + recon_loss2).mean()
     kl_loss = (kl_theta1 + kl_theta2)
+    beta = current_epoch / epochs
     loss = recon_loss + kl_loss
 
     loss.backward()
