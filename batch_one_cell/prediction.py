@@ -46,6 +46,7 @@ class MLP(nn.Module):
         self.layer1 = nn.Linear(input_dim, hidden_dim)
         self.layer2 = nn.Linear(hidden_dim, output_dim)
         self.relu = nn.ReLU()
+        self.leakyrelu = nn.LeakyReLU()
 
     def forward(self, x):
         x = self.relu(self.layer1(x))
