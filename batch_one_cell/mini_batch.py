@@ -1,240 +1,167 @@
 import torch
-import torch.nn.functional as F
-from torch_geometric.nn import GATv2Conv
-from torch import optim
-import time
-import warnings
-from numba.core.errors import NumbaDeprecationWarning
 import anndata
-import torch.nn as nn
+import numpy as np
 from tqdm import tqdm
-import os
 
-import select_gpu
-import mini_batch
-import helper2
-import model2
+def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata, feature_matrix, edge_index, device):
+    """
+   =====================================================================================
+   Generate: X_rna_test_tensor, X_rna_test_tensor_normalized, scRNA_test_anndata
+   =====================================================================================
+   """
+    test_end = end
+    test_start = start
 
+    scRNA_adata_test = scRNA_adata[test_start:test_end, :num_of_gene]
 
-def train_one_epoch(gnn, mlp, optimizer, RNA_tensor_normalized, ATAC_tensor_normalized,
-                    emb_size, random_matrix, edge_index, true_celltype, device):
-    gnn.train()
-    mlp.train()
-
-    gnn.zero_grad()
-    mlp.zero_grad()
-    optimizer.zero_grad()
-
-    cell_num = len(RNA_tensor_normalized)
-
-    pred_celltype_list = []
-    cell_emb_list = []
-
-    for cell in range(cell_num):
-        one_cell_RNA_tensor_normalized = RNA_tensor_normalized[cell].unsqueeze(0)
-        one_cell_ATAC_tensor_normalized = ATAC_tensor_normalized[cell].unsqueeze(0)
-        feature_matrix = helper2.generate_feature_matrix(one_cell_RNA_tensor_normalized,
-                                                         one_cell_ATAC_tensor_normalized,
-                                                         emb_size, random_matrix, device)
-        # gene+peak x emb
-        cell_emb = gnn(feature_matrix.to(device), edge_index.to(device))
-        # 1 x emb
-        cell_emb = cell_emb.mean(dim=0, keepdim=True)
-        cell_emb = mlp(cell_emb)
-        cell_emb = F.softmax(cell_emb, dim=1)
-        pred_celltype = torch.argmax(cell_emb).to(torch.float32).unsqueeze(0)
-        pred_celltype = pred_celltype.clone().detach().requires_grad_(True)
-
-        pred_celltype_list.append(pred_celltype)
-        cell_emb_list.append(cell_emb)
-
-    pred_celltype = torch.cat(pred_celltype_list, dim=0)
-    pred_emb = torch.cat(cell_emb_list, dim=0)
-
-    loss_func = nn.MSELoss()
-    # loss = loss_func(pred_celltype.to(torch.float32), true_celltype.to(torch.float32))
-    # print(pred_emb.shape)
-    # print(true_celltype.shape)
-    loss = loss_func(pred_emb.to(torch.float32), true_celltype.to(torch.float32))
-    loss = loss.mean()
-
-    loss.backward()
-    optimizer.step()
-
-    return loss.item(), pred_celltype
+    X_rna_test = scRNA_adata.X.toarray()[test_start:test_end, :num_of_gene]
+    X_rna_test_tensor = torch.from_numpy(X_rna_test)
 
 
-def train(gnn, mlp, optimizer, train_set, labels, batch_size, random_matrix, edge_index, epochs, device):
+    sums_test_rna = X_rna_test_tensor.sum(1).unsqueeze(1)
+    X_rna_test_tensor_normalized = X_rna_test_tensor / sums_test_rna
 
-    org_labels = labels
-    labels = F.one_hot(labels, num_classes=19).float().clone().detach().requires_grad_(True)
-    # print(labels)
+    scRNA_test_anndata = anndata.AnnData(
+        X=scRNA_adata.X[test_start:test_end, :num_of_gene].toarray())
+    scRNA_test_anndata.obs['Celltype'] = scRNA_adata.obs['cell_type'].values[
+                                         test_start:test_end]
 
-    if os.path.exists(param_savepath):
-        state_dicts = torch.load(param_savepath)
-        gnn.load_state_dict(state_dicts['gnn'])
-        print("load params successful")
+    """
+    =====================================================================================
+    Generate: X_atac_test_tensor, X_atac_test_tensor_normalized, scATAC_test_anndata
+    =====================================================================================
+    """
+    scATAC_adata_test = scATAC_adata[test_start:test_end, :num_of_peak]
 
-    for epoch in range(epochs):
-        pred_labels_list = []
-        total_loss = 0
-        for train_batch in tqdm(train_set):
-            (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
-             scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, emb_size) = train_batch
+    X_atac_test = scATAC_adata.X.toarray()[test_start:test_end, :num_of_peak]
+    X_atac_test_tensor = torch.from_numpy(X_atac_test)
 
-            start = epoch*batch_size
-            end = start+batch_size
-            true_celltype = labels[start:end]
+    sums_test_atac = X_atac_test_tensor.sum(1).unsqueeze(1)
+    X_atac_test_tensor_normalized = X_atac_test_tensor / sums_test_atac
 
-            loss, pred_celltype = train_one_epoch(gnn, mlp, optimizer, X_rna_tensor_normalized, X_atac_tensor_normalized,
-                                   emb_size, random_matrix, edge_index, true_celltype, device)
-            total_loss+=loss
+    scATAC_test_anndata = anndata.AnnData(
+        X=scATAC_adata.X[test_start:test_end, :num_of_peak].toarray())
+    scATAC_test_anndata.obs['Celltype'] = scATAC_adata.obs['cell_type'].values[
+                                          test_start:test_end]
 
-            pred_labels_list.append(pred_celltype)
+    """
+    =====================================================================================
+    Generate: test_edge_index, test_gene_correlation_matrix, test_peak_correlation_matrix
+    =====================================================================================
+    """
+    test_edge_index = edge_index
 
-        pred_labels = torch.cat(pred_labels_list, dim=0)
-        acc = 0.0
-        for i in range(len(pred_labels)):
-            if int(org_labels[i]) == int(pred_labels[i]):
-                acc += 1.0
-        acc /= len(pred_labels)
+    X_rna_test_tensor = X_rna_test_tensor.to(device)
+    X_rna_test_tensor_normalized = X_rna_test_tensor_normalized.to(device)
+    X_atac_test_tensor = X_atac_test_tensor.to(device)
+    X_atac_test_tensor_normalized = X_atac_test_tensor_normalized.to(device)
+    feature_matrix = feature_matrix.to(device)
+    test_edge_index = test_edge_index.to(device)
 
-        print(f"training Loss: {total_loss}, training Accuracy: {acc * 100:.2f}%")
+    test_set = (X_rna_test_tensor, X_rna_test_tensor_normalized, X_atac_test_tensor,
+                X_atac_test_tensor_normalized, scRNA_test_anndata, scATAC_test_anndata,
+                feature_matrix, test_edge_index)
+
+    return test_set
 
 
-    model_tuple = (gnn, mlp)
-    return model_tuple
+def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
+                            num_of_cell, num_of_gene, num_of_peak,
+                            test_num_of_cell, batch_size, batch_num,
+                            emb_size, edge_index):
+    print("======  start processing data  ======")
+    training_set = []
+
+    for i in tqdm(range(batch_num)):
+        # print(f"process batches [{i + 1} / {batch_num}]")
+        start = i * batch_size
+        end = start + batch_size
+        selected_cells = np.array([i for i in range(start, end, 1)])
+        # selected_cells = np.random.choice(num_of_cell, size=batch_size, replace=False)
+        # print(selected_cells)
+
+        """
+        =====================================================================================
+        Generate: X_rna_tensor, X_rna_tensor_normalized, scRNA_mini_batch_anndata
+        =====================================================================================
+        """
+        scRNA_adata_mini_batch = scRNA_adata[:num_of_cell, :]
+        scRNA_adata_mini_batch = scRNA_adata_mini_batch[selected_cells, :]
+
+        X_rna = scRNA_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_gene]
+
+        X_rna_tensor = torch.from_numpy(X_rna)
+        X_rna_tensor = X_rna_tensor.clone().detach().float()
 
 
-if __name__ == "__main__":
-    rna_path = "../data/10x-Multiome-Pbmc10k-RNA.h5ad"
-    atac_path = "../data/10x-Multiome-Pbmc10k-ATAC.h5ad"
-    # rna_path = "../data/BMMC_rna_filtered.h5ad"
-    # atac_path = "../data/BMMC_atac_filtered.h5ad"
+        sums_rna = X_rna_tensor.sum(1).unsqueeze(1)
+        X_rna_tensor_normalized = X_rna_tensor / sums_rna
 
-    gene_exp = anndata.read('../data/10x-Multiome-Pbmc10k-RNA.h5ad')
-    total_gene = gene_exp.shape[1]
+        scRNA_mini_batch_anndata = anndata.AnnData(X=scRNA_adata_mini_batch.X[:num_of_cell, :num_of_gene].toarray())
+        scRNA_mini_batch_anndata.obs['Celltype'] = scRNA_adata_mini_batch.obs['cell_type'].values[:num_of_cell]
 
-    peak_exp = anndata.read('../data/10x-Multiome-Pbmc10k-ATAC.h5ad')
-    total_peak = peak_exp.shape[1]
-    total_cell_num = gene_exp.shape[0]
+        """
+        =====================================================================================
+        Generate: X_atac_tensor, X_atac_tensor_normalized, scATAC_mini_batch_anndata
+        =====================================================================================
+        """
+        scATAC_adata_mini_batch = scATAC_adata[:num_of_cell, :]
+        scATAC_adata_mini_batch = scATAC_adata_mini_batch[selected_cells, :]
 
-    # index_path = '../data/relation/gene_peak_index_relation.pickle'
-    # gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None, gene_limit=12000)
-    index_path = '../data/relation/highly_gene_peak_index_relation.pickle'
-    gene_index_list, peak_index_list = helper2.get_peak_index(index_path, top=5, threshould=None)
-    gene_exp = gene_exp[:, gene_index_list]
-    gene_num = gene_exp.shape[1]
-    peak_exp = peak_exp[:, peak_index_list]
-    peak_num = peak_exp.shape[1]
 
-    warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
+        X_atac = scATAC_adata_mini_batch.X.toarray()[:num_of_cell, :num_of_peak]
 
-    num_of_cell = 8000
-    # num_of_gene = 20000
-    # num_of_peak = 60000
-    num_of_gene = gene_num
-    num_of_peak = peak_num
-    test_num_of_cell = total_cell_num - num_of_cell
-    batch_num = 500
-    batch_size = int(num_of_cell / batch_num)
-    emb_size = 256
-    emb_size2 = 256
-    # emb_graph = num_of_cell
-    emb_graph = emb_size2
-    num_of_topic = 19
-    gnn_conv = 'GATv2'
-    num_epochs = 40
-    ari_freq = 2
-    plot_path_rel = "./plot/"
-    lr = 0.001
-    param_savepath = f"./model_params/best_model_{emb_size2}.pth"
+        X_atac_tensor = torch.from_numpy(X_atac)
+        X_atac_tensor = X_atac_tensor.to(torch.float32)
 
-    print(f"num_of_topic: {num_of_topic}")
-    # mtx_path = '../data/relation_by_score/top5_peak_tf_gene.pickle'
-    # mtx_path = '../data/relation2/top5_peak_tf_gene.pickle'
-    # mtx_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
-    mtx_path = '../data/gene_peak/top5peak_gene.pickle'
-    result, edge_index = helper2.get_sub_graph_by_index(
-        path=mtx_path,
-        gene_index_list=gene_index_list,
-        peak_index_list=peak_index_list,
-        total_peak=total_peak
-    )
+        sums_atac = X_atac_tensor.sum(1).unsqueeze(1)
+        X_atac_tensor_normalized = X_atac_tensor / sums_atac
 
-    # mtx_path = '../data/relation2/top5_peak_tf_gene.pickle'
-    # result, edge_index = helper2.get_sub_graph(
-    #     path=mtx_path,
-    #     num_gene=num_of_gene,
-    #     num_peak=num_of_peak,
-    #     total_peak=total_peak
-    # )
-    # print(len(edge_index[0]))
+        scATAC_mini_batch_anndata = anndata.AnnData(X=scATAC_adata_mini_batch.X[:num_of_cell, :num_of_peak].toarray())
+        scATAC_mini_batch_anndata.obs['Celltype'] = scATAC_adata_mini_batch.obs['cell_type'].values[:num_of_cell]
 
-    if torch.cuda.is_available():
-        print("=======  GPU device found  =======")
-        selected_gpu = select_gpu.get_lowest_usage_gpu_index()
-        torch.cuda.set_device(selected_gpu)
-        device = torch.device("cuda:{}".format(selected_gpu))
-    else:
-        device = torch.device("cpu")
-        print("=======  No GPU found  =======")
+        """
+        =====================================================================================
+        Generate: edge_index, gene_correlation_matrix, peak_correlation_matrix
+        =====================================================================================
+        """
+        edge_index = edge_index
 
-    cell_type = (gene_exp.obs['cell_type'].values)
-    celltype_to_numeric = {category: index for index, category in enumerate(sorted(set(cell_type)))}
-    numeric_labels = [celltype_to_numeric[category] for category in cell_type]
-    # print(cell_type)
-    # print(numeric_labels)
+        X_rna_tensor = X_rna_tensor.to(device)
+        X_rna_tensor_normalized = X_rna_tensor_normalized.to(device)
+        X_atac_tensor = X_atac_tensor.to(device)
+        X_atac_tensor_normalized = X_atac_tensor_normalized.to(device)
+        edge_index = edge_index.to(device)
 
-    # sum = 0
-    # for i in range(len(numeric_labels)):
-    #     if numeric_labels[i] == 3:
-    #         numeric_labels[i] = 1
-    #     else:
-    #         numeric_labels[i] = 0
-    # print(sum)
-    # print(numeric_labels)
+        training_batch = (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
+                          scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, emb_size)
 
-    labels = torch.tensor(numeric_labels).to(device)
+        training_set.append(training_batch)
 
-    result_dense = result.toarray()
-    result_tensor = torch.from_numpy(result_dense).float().to(device)
-    print(f"result.shape: {result_tensor.shape}, result type: {type(result_tensor)}")
-    print(result_tensor.sum())
+    fm = torch.randn((num_of_peak + num_of_gene, emb_size))
 
-    training_set, total_training_set, test_set, fm = mini_batch.process_mini_batch_data(
-        scRNA_adata=gene_exp,
-        scATAC_adata=peak_exp,
-        device=device,
-        num_of_cell=num_of_cell,
+    total_training_set = get_val_data(
+        start=0,
+        end=num_of_cell,
         num_of_gene=num_of_gene,
         num_of_peak=num_of_peak,
-        test_num_of_cell=test_num_of_cell,
-        batch_size=batch_size,
-        batch_num=batch_num,
-        emb_size=emb_size,
+        scRNA_adata=scRNA_adata,
+        scATAC_adata=scATAC_adata,
         edge_index=edge_index,
+        feature_matrix=fm,
+        device=device,
     )
 
-    # gene+peak x emb
-    gnn = model2.GNN(emb_graph, emb_size2 * 2, emb_size2, 1, device, 0, gnn_conv).to(device)
-
-    # 1 x emb
-    mlp = model2.MLP(emb_size2, 64, num_of_topic).to(device)
-    model_tuple = (gnn, mlp)
-
-    parameters = [{'params': gnn.parameters()},
-                  {'params': mlp.parameters()},]
-
-    optimizer = optim.Adam(parameters, lr=lr)
-
-    print(model_tuple)
-    print(labels)
-
-    st = time.time()
-    # gnn, mlp, optimizer, train_set, labels, emb_size, random_matrix, edge_index, epochs, device
-    model = train(
-        gnn, mlp, optimizer, training_set, labels, batch_size, fm, edge_index, num_epochs, device
+    test_set = get_val_data(
+        start=num_of_cell,
+        end=num_of_cell + test_num_of_cell,
+        num_of_gene=num_of_gene,
+        num_of_peak=num_of_peak,
+        scRNA_adata=scRNA_adata,
+        scATAC_adata=scATAC_adata,
+        edge_index=edge_index,
+        feature_matrix=fm,
+        device=device,
     )
-    ed = time.time()
-    print(f"training time: {ed - st}")
+
+    return training_set, total_training_set, test_set, fm
