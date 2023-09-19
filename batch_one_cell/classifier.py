@@ -70,11 +70,12 @@ def train(gnn, mlp, optimizer, train_set, labels, batch_size, random_matrix, edg
     for epoch in range(epochs):
         pred_labels_list = []
         total_loss = 0
+        index = 0
         for train_batch in tqdm(train_set):
             (X_rna_tensor, X_rna_tensor_normalized, X_atac_tensor, X_atac_tensor_normalized,
              scRNA_mini_batch_anndata, scATAC_mini_batch_anndata, emb_size) = train_batch
 
-            start = epoch*batch_size
+            start = index*batch_size
             end = start+batch_size
             true_celltype = labels[start:end]
 
@@ -83,6 +84,8 @@ def train(gnn, mlp, optimizer, train_set, labels, batch_size, random_matrix, edg
             total_loss+=loss
 
             pred_labels_list.append(pred_celltype)
+
+            index += 1
 
         pred_labels = torch.cat(pred_labels_list, dim=0)
         acc = 0.0

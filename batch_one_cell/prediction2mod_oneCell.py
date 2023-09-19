@@ -28,7 +28,7 @@ X_rna = X_rna_tensor_normalized
 # atac
 data_path_atac = '../data/10x-Multiome-Pbmc10k-ATAC.h5ad'
 adata_atac = read_h5ad(data_path_atac)
-adata_atac = adata_atac[:, gene_index_list]
+adata_atac = adata_atac[:, peak_index_list]
 X_atac = adata_atac.X.toarray()
 X_atac_tensor = torch.from_numpy(X_atac)
 X_atac_tensor = X_atac_tensor.to(torch.float32)
@@ -49,14 +49,16 @@ class MultiModalMLP(nn.Module):
         super(MultiModalMLP, self).__init__()
         self.mlp_rna = nn.Sequential(
             nn.Linear(input_dim_rna, hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, 64)
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 64),
+            nn.ReLU(),
         )
 
         self.mlp_atac = nn.Sequential(
             nn.Linear(input_dim_atac, hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, 64)
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 64),
+            nn.ReLU(),
         )
 
         self.classifier = nn.Linear(64, output_dim)
@@ -77,7 +79,7 @@ model = MultiModalMLP(input_dim_rna=X_rna_train.shape[1],
                       input_dim_atac=X_atac_train.shape[1],
                       hidden_dim=128,
                       output_dim=len(label_encoder.classes_),
-                      beta=0.8)
+                      beta=0.5)
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.AdamW(model.parameters(), lr=0.001)
