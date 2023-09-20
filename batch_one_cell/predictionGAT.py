@@ -21,6 +21,7 @@ num_of_cell = 9631
 # rna
 data_path_rna = '../data/10x-Multiome-Pbmc10k-RNA.h5ad'
 adata_rna = read_h5ad(data_path_rna)
+total_gene = adata_rna.X.shape[1]
 adata_rna = adata_rna[:num_of_cell, gene_index_list]
 X_rna = adata_rna.X.toarray()
 X_rna_tensor = torch.from_numpy(X_rna)
@@ -32,6 +33,7 @@ X_rna = X_rna_tensor_normalized
 # atac
 data_path_atac = '../data/10x-Multiome-Pbmc10k-ATAC.h5ad'
 adata_atac = read_h5ad(data_path_atac)
+total_peak = adata_atac.X.shape[1]
 adata_atac = adata_atac[:num_of_cell, peak_index_list]
 X_atac = adata_atac.X.toarray()
 X_atac_tensor = torch.from_numpy(X_atac)
@@ -120,7 +122,7 @@ result, edge_index = helper2.get_sub_graph_by_index(
     path=mtx_path,
     gene_index_list=gene_index_list,
     peak_index_list=peak_index_list,
-    total_peak=X_atac_train.shape[1],
+    total_peak=total_peak
 )
 edge_index = edge_index.to(device)
 
@@ -158,7 +160,7 @@ else:
 
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.AdamW(model.parameters(), lr=0.001)
+optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-6)
 
 num_epochs = 20
 losses = []
