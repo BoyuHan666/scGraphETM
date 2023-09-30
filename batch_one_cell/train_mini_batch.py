@@ -1,5 +1,6 @@
 import torch
 from torch import optim
+from torch_geometric.nn import Node2Vec
 import time
 import warnings
 from numba.core.errors import NumbaDeprecationWarning
@@ -159,13 +160,13 @@ if __name__ == "__main__":
     test_num_of_cell = total_cell_num - num_of_cell
     batch_num = 500
     batch_size = int(num_of_cell / batch_num)
-    emb_size = 256
-    emb_size2 = 256
+    emb_size = 512
+    emb_size2 = 512
     # emb_graph = num_of_cell
     emb_graph = emb_size2
     num_of_topic = 20
     gnn_conv = 'GATv2'
-    num_epochs = 40
+    num_epochs = 20
     ari_freq = 2
     plot_path_rel = "./plot/"
     lr = 0.001
@@ -204,6 +205,24 @@ if __name__ == "__main__":
         device = torch.device("cpu")
         print("=======  No GPU found  =======")
 
+    # use node2vec to get lookup table
+    Node2Vec_model = Node2Vec(edge_index, emb_size, walk_length=20, context_size=10, walks_per_node=10)
+    Node2Vec_model = Node2Vec_model.to(device)
+
+    Node2Vec_model.train()
+    optimizer = torch.optim.Adam(Node2Vec_model.parameters(), lr=0.01)
+    loader = Node2Vec_model.loader(batch_size=128, shuffle=True, num_workers=0)
+    for epoch in tqdm(range(200)):
+        for pos_rw, neg_rw in loader:
+            optimizer.zero_grad()
+            loss = Node2Vec_model.loss(pos_rw.to(device), neg_rw.to(device))
+            loss.backward()
+            optimizer.step()
+
+    node_embeddings = Node2Vec_model.embedding.weight
+    print(node_embeddings.shape)
+    print(node_embeddings.sum())
+
     result_dense = result.toarray()
     result_tensor = torch.from_numpy(result_dense).float().to(device)
     print(f"result.shape: {result_tensor.shape}, result type: {type(result_tensor)}")
@@ -225,10 +244,10 @@ if __name__ == "__main__":
 
     encoder1 = model2.VAE(num_of_gene, emb_size, num_of_topic).to(device)
     encoder2 = model2.VAE(num_of_peak, emb_size, num_of_topic).to(device)
-    gnn = model2.GNN(emb_size2, emb_size2 * 2, emb_size2, 1, device, 0, gnn_conv).to(device)
-    mlp1 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
-    mlp2 = model2.MLP(emb_size2, emb_size2 * 2, emb_size).to(device)
-    graph_dec = model2.DEC(emb_size2, emb_size2 * 4, num_of_peak+num_of_gene).to(device)
+    gnn = model2.GNN(emb_size, emb_size * 2, emb_size, 1, device, 0, gnn_conv).to(device)
+    mlp1 = model2.MLP(emb_size, emb_size * 2, emb_size).to(device)
+    mlp2 = model2.MLP(emb_size, emb_size * 2, emb_size).to(device)
+    graph_dec = model2.DEC(emb_size, emb_size * 4, num_of_peak+num_of_gene).to(device)
     decoder1 = model2.LDEC(num_of_gene, emb_size, num_of_topic, batch_size).to(device)
     decoder2 = model2.LDEC(num_of_peak, emb_size, num_of_topic, batch_size).to(device)
 
@@ -258,7 +277,7 @@ if __name__ == "__main__":
         train_set=training_set,
         total_training_set=total_training_set,
         test_set=test_set,
-        random_matrix=fm,
+        random_matrix=node_embeddings, # or fm
         edge_index=edge_index.to(device),
         ari_freq=ari_freq,
         niter=num_epochs,
