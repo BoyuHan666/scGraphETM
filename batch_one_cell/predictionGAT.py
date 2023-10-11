@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from torch.nn import functional as F
 import os
 from tqdm import tqdm
+import networkx as nx
+from node2vec import Node2Vec
 
 import helper2
 import model2
@@ -73,14 +75,14 @@ class MultiModalVAE_GNN_MLP(nn.Module):
         eps = torch.randn_like(std)
         return eps.mul_(std).add_(mu)
 
-    def forward(self, x_rna, x_atac, edge_index, random_matrix):
+    def forward(self, x_rna, x_atac, edge_index, Z0):
         mu_rna, logvar_rna, _ = self.vae_rna(x_rna)
         mu_atac, logvar_atac, _ = self.vae_atac(x_atac)
 
         theta_rna = self.reparameterize(mu_rna, logvar_rna)
         theta_atac = self.reparameterize(mu_atac, logvar_atac)
 
-        feature_matrix = generate_feature_matrix(x_rna, x_atac, emb_size, random_matrix, device)
+        feature_matrix = generate_feature_matrix(x_rna, x_atac, emb_size, Z0, device)
         gene_peak_embedding = self.gnn(feature_matrix, edge_index)
         # gene_peak_embedding = gene_peak_embedding.flatten(start_dim=0).unsqueeze(0)
         gene_peak_embedding = gene_peak_embedding.max(dim=0)[0].unsqueeze(0)
@@ -92,16 +94,43 @@ class MultiModalVAE_GNN_MLP(nn.Module):
         return self.classifier(out)
 
 
-def generate_feature_matrix(gene_exp_normalized, peak_exp_normalized, emb_size, random_matrix, device):
+def generate_feature_matrix(gene_exp_normalized, peak_exp_normalized, emb_size, Z0, device):
     concatenated = torch.cat((peak_exp_normalized.T, gene_exp_normalized.T), dim=0)
-    org_feature_matrix = random_matrix.to(device) * concatenated.repeat(1, emb_size).to(device)
+    org_feature_matrix = Z0.to(device) * concatenated.repeat(1, emb_size).to(device)
     non_zero_mask = concatenated != 0
     concatenated[non_zero_mask] = 1
-    binary_feature_matrix = random_matrix.to(device) * concatenated.repeat(1, emb_size).to(device)
+    binary_feature_matrix = Z0.to(device) * concatenated.repeat(1, emb_size).to(device)
 
-    # feature_matrix = random_matrix.to(device) + concatenated.repeat(1, emb_size).to(device)
-    feature_matrix = random_matrix.to(device) + org_feature_matrix
-    # feature_matrix = random_matrix.to(device) + binary_feature_matrix
+    # feature_matrix = Z0.to(device) + concatenated.repeat(1, emb_size).to(device)
+    feature_matrix = Z0.to(device) + org_feature_matrix
+    # feature_matrix = Z0.to(device) + binary_feature_matrix
+    return feature_matrix
+
+
+def create_graph_from_edge_index(edge_index):
+    G = nx.Graph()
+    src_nodes = edge_index[0]
+    dst_nodes = edge_index[1]
+    edges = list(zip(src_nodes, dst_nodes))
+    print(len(edges))
+    G.add_edges_from(edges)
+    for edge in G.edges():
+        G[edge[0]][edge[1]]['weight'] = 1
+        G = G.to_undirected()
+    return G
+
+
+def generate_Z0(G, num_node, emb_size):
+    node2vec = Node2Vec(G, dimensions=emb_size, walk_length=20, num_walks=100, workers=4)
+    model = node2vec.fit(window=5, min_count=2, batch_words=8)
+
+    feature_matrix = []
+    for node in range(num_node):
+        node_str = str(node)
+        if node_str in model.wv:
+            feature_matrix.append(model.wv[node_str])
+        else:
+            feature_matrix.append([0] * emb_size)
     return feature_matrix
 
 
@@ -114,7 +143,6 @@ num_topics = 20
 hidden_dim = 128
 beta = 0.5
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-random_matrix = torch.randn((X_rna_train.shape[1] + X_atac_train.shape[1], emb_size)).to(device)
 
 # edge_index
 mtx_path = '../data/gene_peak/top5peak_gene.pickle'
@@ -125,6 +153,12 @@ result, edge_index = helper2.get_sub_graph_by_index(
     total_peak=total_peak
 )
 edge_index = edge_index.to(device)
+G = create_graph_from_edge_index(edge_index)
+
+# Z0 = torch.randn((X_rna_train.shape[1] + X_atac_train.shape[1], emb_size)).to(device)
+Z0 = torch.tensor(np.array(generate_Z0(G, len(gene_index_list)+len(peak_index_list), emb_size)), dtype=torch.float32).to(device)
+print(Z0)
+
 
 gnn_params = {
     "in_channels": emb_size,
@@ -178,7 +212,7 @@ for epoch in range(num_epochs):
 
         batch_outputs = []
         for i in range(len(batch_X_rna)):
-            single_output = model(batch_X_rna[i].unsqueeze(0), batch_X_atac[i].unsqueeze(0), edge_index, random_matrix)
+            single_output = model(batch_X_rna[i].unsqueeze(0), batch_X_atac[i].unsqueeze(0), edge_index, Z0)
             batch_outputs.append(single_output)
 
         outputs = torch.cat(batch_outputs, dim=0)
@@ -228,7 +262,7 @@ with torch.no_grad():
         single_X_atac = X_atac_test[i].unsqueeze(0).to(device)
         single_y = torch.LongTensor([y_rna_test[i]]).to(device)
 
-        y_pred = model(single_X_rna, single_X_atac, edge_index, random_matrix)
+        y_pred = model(single_X_rna, single_X_atac, edge_index, Z0)
         _, predicted = y_pred.max(1)
 
         correct += (predicted == single_y).sum().item()
