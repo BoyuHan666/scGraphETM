@@ -49,6 +49,7 @@ class CombinedModel(nn.Module):
         remainder = repeat % len(tf_index_list)
 
         augmented_data = tf_embeddings.repeat(repeat_times, 1)
+        augmented_data = augmented_data.to(device)
         if remainder > 0:
             extra_data = tf_embeddings[:remainder]
             augmented_data = torch.cat((augmented_data, extra_data), dim=0)
@@ -125,7 +126,7 @@ if __name__ == "__main__":
     # param_savepath = None
     # best_ari_path = None
 
-    seed = 123
+    seed = 11
 
     random.seed(seed)
     np.random.seed(seed)
@@ -172,7 +173,8 @@ if __name__ == "__main__":
     # print(node_embeddings.shape)
     # print(node_embeddings.sum())
 
-    fm = torch.randn((num_of_peak + num_of_gene, emb_size))
+    fm = torch.randn((num_of_peak + num_of_gene, emb_size)).to(device)
+    edge_index = edge_index.to(device)
 
     result_dense = result.toarray()
     result_tensor = torch.from_numpy(result_dense).float().to(device)
@@ -191,11 +193,18 @@ if __name__ == "__main__":
 
 
     gnn = model2.GNN(emb_size, emb_size * 2, emb_size, 1, device, 0, gnn_conv).to(device)
-    mlp = MLP(emb_size)
-    model = CombinedModel(gnn, mlp)
+    mlp = MLP(emb_size).to(device)
+    model = CombinedModel(gnn, mlp).to(device)
+
+    param_savepath = f"./model_params/best_model_{emb_size}.pth"
+    if os.path.exists(param_savepath):
+        checkpoint = torch.load(param_savepath, map_location=torch.device(device))
+        model.gnn.load_state_dict(checkpoint['gnn'])
+    else:
+        print(f"Warning: Checkpoint not found at {param_savepath}. Skipping parameter loading.")
 
     repeat = 100
-    augmented_labels = torch.ones(repeat, dtype=torch.long)
+    augmented_labels = torch.ones(repeat, dtype=torch.long).to(device)
     true_tf_label_tensor = torch.cat((true_tf_label_tensor, augmented_labels))
 
     class_counts = [sum(true_tf_label_tensor == 0), sum(true_tf_label_tensor == 1)]
