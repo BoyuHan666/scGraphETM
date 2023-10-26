@@ -203,7 +203,7 @@ if __name__ == "__main__":
     else:
         print(f"Warning: Checkpoint not found at {param_savepath}. Skipping parameter loading.")
 
-    repeat = 100
+    repeat = 500
     augmented_labels = torch.ones(repeat, dtype=torch.long).to(device)
     true_tf_label_tensor = torch.cat((true_tf_label_tensor, augmented_labels))
 
@@ -216,7 +216,9 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss(weight=weights)
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    num_epochs = 20
+    num_epochs = 30
+    loss_list = []
+    acc_list = []
     for epoch in range(num_epochs):
 
         optimizer.zero_grad()
@@ -237,7 +239,12 @@ if __name__ == "__main__":
         total_samples = true_tf_label_tensor.size(0)
 
         accuracy = total_correct / total_samples
+        loss_list.append(loss.item())
+        acc_list.append(accuracy)
         print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss:.4f}, Accuracy: {accuracy:.4f}')
+
+    print(loss_list)
+    print(acc_list)
 
 
 
