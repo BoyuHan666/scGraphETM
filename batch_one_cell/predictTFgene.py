@@ -7,7 +7,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import pickle
-import json
 import random
 from numba.core.errors import NumbaDeprecationWarning
 from tqdm import tqdm
@@ -96,14 +95,116 @@ if __name__ == "__main__":
     peak_exp = peak_exp[:, peak_index_list]
     peak_num = peak_exp.shape[1]
 
-    result = {}
+    if torch.cuda.is_available():
+        print("=======  GPU device found  =======")
+        selected_gpu = select_gpu.get_lowest_usage_gpu_index()
+        torch.cuda.set_device(selected_gpu)
+        device = torch.device("cuda:{}".format(selected_gpu))
+    else:
+        device = torch.device("cpu")
+        print("=======  No GPU found  =======")
+
+    num_of_cell = 8000
+    # num_of_gene = 20000
+    # num_of_peak = 60000
+    num_of_gene = gene_num
+    num_of_peak = peak_num
+    test_num_of_cell = total_cell_num - num_of_cell
+    batch_num = 500
+    batch_size = int(num_of_cell / batch_num)
+    emb_size = 512
+    # emb_graph = num_of_cell
+    # emb_graph = emb_size
+    num_of_topic = 40
+    gnn_conv = 'GATv2'
+    num_epochs = 200
+    freq = 5
+    step = 16
+    plot_path_rel = "./plot/"
+    lr = 0.001
+    param_savepath = f"./model_params/best_model_{emb_size}.pth"
+    best_ari_path = f"./model_params/best_ari_{emb_size}.pkl"
+    # param_savepath = f"./model_params/best_model_node2vec_{emb_size}2.pth"
+    # best_ari_path = f"./model_params/best_ari_node2vec_{emb_size}2.pth"
+    # param_savepath = None
+    # best_ari_path = None
+
+    seed = 11
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)  # CPU随机种子确定
+    torch.cuda.manual_seed(seed)  # GPU随机种子确定
+    torch.cuda.manual_seed_all(seed)  # 所有的GPU设置种子
+
+    # mtx_path = '../data/relation_by_score/top5_peak_tf_gene.pickle'
+    # mtx_path = '../data/relation2/top5_peak_tf_gene.pickle'
+    # mtx_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
+    mtx_path = '../data/gene_peak/top5peak_gene.pickle'
+    result, edge_index = helper2.get_sub_graph_by_index(
+        path=mtx_path,
+        gene_index_list=gene_index_list,
+        peak_index_list=peak_index_list,
+        total_peak=total_peak
+    )
+
+    # use node2vec to get lookup table
+    # Node2Vec_model = Node2Vec(edge_index, emb_size, walk_length=5, context_size=5, walks_per_node=10)
+    # Node2Vec_model = Node2Vec_model.to(device)
+    #
+    # Node2Vec_model.train()
+    # optimizer = torch.optim.Adam(Node2Vec_model.parameters(), lr=0.01)
+    # loader = Node2Vec_model.loader(batch_size=256, shuffle=False, num_workers=0)
+    # for epoch in tqdm(range(200)):
+    #     for pos_rw, neg_rw in loader:
+    #         optimizer.zero_grad()
+    #         loss = Node2Vec_model.loss(pos_rw.to(device), neg_rw.to(device))
+    #         loss.backward()
+    #         optimizer.step()
+    #
+    # node_embeddings = Node2Vec_model.embedding.weight
+    # print(f"node_embeddings shape: {node_embeddings.shape}")
+
+    fm = torch.randn((num_of_peak + num_of_gene, emb_size)).to(device)
+    # fm = node_embeddings.detach().clone().to(device)
+    print(f"fm shape: {fm.shape}")
+
+    train_fm = fm
+    test_fm = fm
+    edge_index = edge_index.to(device)
+
+    result_dense = result.toarray()
+    result_tensor = torch.from_numpy(result_dense).float().to(device)
+    print(f"result.shape: {result_tensor.shape}, result type: {type(result_tensor)}")
+    print(result_tensor.sum())
+
+    gnn = model2.GNN(emb_size, emb_size * 2, emb_size, 1, device, 0, gnn_conv).to(device)
+    mlp = MLP(emb_size * 2, 2).to(device)
+    model = CombinedModel(gnn, mlp).to(device)
+
+    if os.path.exists(param_savepath):
+        checkpoint = torch.load(param_savepath, map_location=torch.device(device))
+        model.gnn.load_state_dict(checkpoint['gnn'])
+    else:
+        print(f"Warning: Checkpoint not found at {param_savepath}. Skipping parameter loading.")
+
+    result = []
+    tf_gene_path = '../data/TF/tf_target_in_vocab_update.txt'
+    with open(tf_gene_path, "r") as file:
+        for line in file:
+            gene_ids = line.strip().split()
+            result.append(gene_ids)
+
+    perf = {}
     # TODO: Here to add cell type specific adata
     unique_cell_types = gene_exp.obs['cell_type'].unique()
-    split_adatas = {cell_type: gene_exp[gene_exp.obs['cell_type'] == cell_type] for cell_type in unique_cell_types}
+    split_adatas = {'all': gene_exp}
+    for cell_type in unique_cell_types:
+        split_adatas[cell_type] = gene_exp[gene_exp.obs['cell_type'] == cell_type]
+
     for i in range(len(split_adatas)):
         specific_cell_type = unique_cell_types[i]
         gene_exp = split_adatas[specific_cell_type]
-        print("="*20+f"  {specific_cell_type}  "+"="*20)
+        print("=" * 20 + f"  {specific_cell_type}  " + "=" * 20)
         print(gene_exp)
 
         # rna
@@ -121,107 +222,6 @@ if __name__ == "__main__":
         X_atac_tensor_normalized = X_atac_tensor / sums_atac
 
         warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
-
-        num_of_cell = 8000
-        # num_of_gene = 20000
-        # num_of_peak = 60000
-        num_of_gene = gene_num
-        num_of_peak = peak_num
-        test_num_of_cell = total_cell_num - num_of_cell
-        batch_num = 500
-        batch_size = int(num_of_cell / batch_num)
-        emb_size = 512
-        # emb_graph = num_of_cell
-        # emb_graph = emb_size
-        num_of_topic = 40
-        gnn_conv = 'GATv2'
-        num_epochs = 200
-        freq = 5
-        step = 16
-        plot_path_rel = "./plot/"
-        lr = 0.001
-        param_savepath = f"./model_params/best_model_{emb_size}.pth"
-        best_ari_path = f"./model_params/best_ari_{emb_size}.pkl"
-        # param_savepath = f"./model_params/best_model_node2vec_{emb_size}2.pth"
-        # best_ari_path = f"./model_params/best_ari_node2vec_{emb_size}2.pth"
-        # param_savepath = None
-        # best_ari_path = None
-
-        seed = 11
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)  # CPU随机种子确定
-        torch.cuda.manual_seed(seed)  # GPU随机种子确定
-        torch.cuda.manual_seed_all(seed)  # 所有的GPU设置种子
-
-        # mtx_path = '../data/relation_by_score/top5_peak_tf_gene.pickle'
-        # mtx_path = '../data/relation2/top5_peak_tf_gene.pickle'
-        # mtx_path = '../data/TF_gene/top5_peak_tf_gene.pickle'
-        mtx_path = '../data/gene_peak/top5peak_gene.pickle'
-        result, edge_index = helper2.get_sub_graph_by_index(
-            path=mtx_path,
-            gene_index_list=gene_index_list,
-            peak_index_list=peak_index_list,
-            total_peak=total_peak
-        )
-
-        if torch.cuda.is_available():
-            print("=======  GPU device found  =======")
-            selected_gpu = select_gpu.get_lowest_usage_gpu_index()
-            torch.cuda.set_device(selected_gpu)
-            device = torch.device("cuda:{}".format(selected_gpu))
-        else:
-            device = torch.device("cpu")
-            print("=======  No GPU found  =======")
-
-        # use node2vec to get lookup table
-        # Node2Vec_model = Node2Vec(edge_index, emb_size, walk_length=5, context_size=5, walks_per_node=10)
-        # Node2Vec_model = Node2Vec_model.to(device)
-        #
-        # Node2Vec_model.train()
-        # optimizer = torch.optim.Adam(Node2Vec_model.parameters(), lr=0.01)
-        # loader = Node2Vec_model.loader(batch_size=256, shuffle=False, num_workers=0)
-        # for epoch in tqdm(range(200)):
-        #     for pos_rw, neg_rw in loader:
-        #         optimizer.zero_grad()
-        #         loss = Node2Vec_model.loss(pos_rw.to(device), neg_rw.to(device))
-        #         loss.backward()
-        #         optimizer.step()
-        #
-        # node_embeddings = Node2Vec_model.embedding.weight
-        # print(f"node_embeddings shape: {node_embeddings.shape}")
-
-        fm = torch.randn((num_of_peak + num_of_gene, emb_size)).to(device)
-        # fm = node_embeddings.detach().clone().to(device)
-        print(f"fm shape: {fm.shape}")
-
-        train_fm = fm
-        test_fm = fm
-        edge_index = edge_index.to(device)
-
-        result_dense = result.toarray()
-        result_tensor = torch.from_numpy(result_dense).float().to(device)
-        print(f"result.shape: {result_tensor.shape}, result type: {type(result_tensor)}")
-        print(result_tensor.sum())
-
-
-        gnn = model2.GNN(emb_size, emb_size * 2, emb_size, 1, device, 0, gnn_conv).to(device)
-        mlp = MLP(emb_size*2, 2).to(device)
-        model = CombinedModel(gnn, mlp).to(device)
-
-        param_savepath = f"./model_params/best_model_{emb_size}.pth"
-        if os.path.exists(param_savepath):
-            checkpoint = torch.load(param_savepath, map_location=torch.device(device))
-            model.gnn.load_state_dict(checkpoint['gnn'])
-        else:
-            print(f"Warning: Checkpoint not found at {param_savepath}. Skipping parameter loading.")
-
-        result = []
-        tf_gene_path = '../data/TF/tf_target_in_vocab_update.txt'
-        with open(tf_gene_path, "r") as file:
-            for line in file:
-                gene_ids = line.strip().split()
-                result.append(gene_ids)
 
         gene_id_to_index = {gene_id: index for index, gene_id in enumerate(gene_exp.var['gene_ids'])}
 
@@ -364,7 +364,14 @@ if __name__ == "__main__":
                 )
 
 
-                output = model(train_feature_matrix, edge_index, num_of_peak, train_tf_list)
+                output = model(
+                    x=train_feature_matrix,
+                    edge_index=edge_index,
+                    num=num_of_peak,
+                    tf_index_list=train_tf_list,
+                    gene_index_list=gene_index_list
+                )
+
                 train_pred_probabilities = output[:, 1].cpu().detach().numpy()
                 pred = torch.argmax(output, dim=1)
 
@@ -421,7 +428,14 @@ if __name__ == "__main__":
                             device=device
                         )
 
-                        test_output = model(test_fm, edge_index, num_of_peak, test_tf_list)
+                        test_output = model(
+                            x=test_feature_matrix,
+                            edge_index=edge_index,
+                            num=num_of_peak,
+                            tf_index_list=test_tf_list,
+                            gene_index_list=gene_index_list
+                        )
+
                         test_pred_probabilities = test_output[:, 1].cpu().detach().numpy()
                         test_pred = torch.argmax(test_output, dim=1)
 
@@ -478,7 +492,7 @@ if __name__ == "__main__":
         print(test_auroc_list)
         print(test_auprc_list)
 
-        result[specific_cell_type] = {
+        perf[specific_cell_type] = {
             'train_loss': loss_list,
             'train_acc_list': acc_list,
             'train_auroc_list': train_auroc_list,
@@ -490,4 +504,4 @@ if __name__ == "__main__":
         }
 
     with open("./numerical_result/result.json", "w") as outfile:
-        json.dump(result, outfile, indent=4)
+        json.dump(perf, outfile, indent=4)
