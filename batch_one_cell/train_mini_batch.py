@@ -8,20 +8,25 @@ import anndata
 import numpy as np
 import pickle
 import random
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import os
+import json
+import louvain
+import leidenalg
+import igraph
 
 import select_gpu
 import mini_batch
 import helper2
 import model2
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-import os
+import eval_perf
 
 
 def train(model_tuple, optimizer,
           train_set, total_training_set, test_set,
           lookup, random_matrix, edge_index, ari_freq, niter,
-          device, param_savepath=None, best_ari_path=None):
+          device, param_savepath=None, best_ari_path=None, best_theta_path=None):
     NELBO = None
     best_ari = 0
     best_train_ari = 0
@@ -57,10 +62,16 @@ def train(model_tuple, optimizer,
         decoder1.load_state_dict(state_dicts['decoder1'])
         decoder2.load_state_dict(state_dicts['decoder2'])
         print("load params successful")
+    if best_theta_path is not None and os.path.exists(best_theta_path):
+        with open(best_theta_path, 'rb') as file:
+            [best_train_theta, best_theta] = pickle.load(file)
+        print("load theta successful")
     if best_ari_path is not None and os.path.exists(best_ari_path):
         with open(best_ari_path, 'rb') as file:
-            best_train_ari = pickle.load(file)
+            [best_train_ari, best_ari] = pickle.load(file)
         print(f"previous best_train_ari is {best_train_ari}")
+
+
 
     for i in range(niter):
 
@@ -122,9 +133,29 @@ def train(model_tuple, optimizer,
                         'decoder2': decoder2.state_dict()
                     }, param_savepath)
                     with open(best_ari_path, 'wb') as file:
-                        pickle.dump(best_train_ari, file)
+                        pickle.dump([best_train_ari, best_ari], file)
+                    with open(best_theta_path, 'wb') as file:
+                        pickle.dump([best_train_theta, best_theta], file)
                     print("save params successful!")
 
+    print(f"best_train_ari: {best_train_ari}, best_val_ari: {best_ari}")
+    print(ari_trains)
+    print(ari_tests)
+    print(loss_set)
+
+    total_scRNA_anndata.obsm['cell_emb'] = best_train_theta.to('cpu')
+    scRNA_test_anndata.obsm['cell_emb'] = best_theta.to('cpu')
+
+    try:
+        result = {}
+        result['Train_10xpbmc'] = eval_perf.eval_testdata(total_scRNA_anndata, 'seurat_clusters', 'Celltype', 'cell_emb', 'Train_10xpbmc')
+        result['Test_10xpbmc'] = eval_perf.eval_testdata(scRNA_test_anndata, 'seurat_clusters', 'Celltype', 'cell_emb', 'Test_10xpbmc')
+        print('evaluate finished')
+        with open('./figures/result.json', 'w') as file:
+            json.dump(result, file, indent=4)
+        print('result save successfully')
+    except Exception as err:
+        print(f"Error happen: {err}")
     return (encoder1, encoder2, gnn, mlp1, mlp2, decoder1, decoder2,
             best_ari, best_theta, best_beta_gene, best_beta_peak,
             best_train_ari, best_train_theta, ari_trains, ari_tests, loss_set)
@@ -165,26 +196,27 @@ if __name__ == "__main__":
     emb_size = 512
     # emb_graph = num_of_cell
     # emb_graph = emb_size
-    num_of_topic = 40
+    num_of_topic = 60
     gnn_conv = 'GATv2'
-    num_epochs = 30
+    num_epochs = 40
     ari_freq = 2
     plot_path_rel = "./plot/"
     lr = 0.001
     # param_savepath = f"./model_params/best_model_{emb_size}.pth"
     # best_ari_path = f"./model_params/best_ari_{emb_size}.pkl"
-    param_savepath = f"./model_params/best_model_node2vec_{emb_size}2.pth"
-    best_ari_path = f"./model_params/best_ari_node2vec_{emb_size}2.pth"
+    param_savepath = f"./model_params/best_model_node2vec_{emb_size}_2.pth"
+    best_ari_path = f"./model_params/best_ari_node2vec_{emb_size}_2.pth"
+    best_theta_path = f"./model_params/best_theta_node2vec_{emb_size}_2.pth"
     # param_savepath = None
     # best_ari_path = None
 
-    seed = 123
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)  # CPU随机种子确定
-    torch.cuda.manual_seed(seed)  # GPU随机种子确定
-    torch.cuda.manual_seed_all(seed)  # 所有的GPU设置种子
+    # seed = 11
+    #
+    # random.seed(seed)
+    # np.random.seed(seed)
+    # torch.manual_seed(seed)  # CPU随机种子确定
+    # torch.cuda.manual_seed(seed)  # GPU随机种子确定
+    # torch.cuda.manual_seed_all(seed)  # 所有的GPU设置种子
 
 
     print(f"num_of_topic: {num_of_topic}")
@@ -219,7 +251,7 @@ if __name__ == "__main__":
         print("=======  No GPU found  =======")
 
     # use node2vec to get lookup table
-    Node2Vec_model = Node2Vec(edge_index, emb_size, walk_length=10, context_size=10, walks_per_node=10)
+    Node2Vec_model = Node2Vec(edge_index, emb_size, walk_length=15, context_size=10, walks_per_node=10)
     Node2Vec_model = Node2Vec_model.to(device)
 
     Node2Vec_model.train()
@@ -290,22 +322,18 @@ if __name__ == "__main__":
         train_set=training_set,
         total_training_set=total_training_set,
         test_set=test_set,
-        lookup=node_embeddings, # node_embeddings or fm
-        random_matrix=node_embeddings, # node_embeddings or fm
+        lookup=node_embeddings,  # node_embeddings or fm
+        random_matrix=node_embeddings,  # node_embeddings or fm
         edge_index=edge_index.to(device),
         ari_freq=ari_freq,
         niter=num_epochs,
         device=device,
         param_savepath=param_savepath,
         best_ari_path=best_ari_path,
+        best_theta_path=best_theta_path
     )
     ed = time.time()
     print(f"training time: {ed - st}")
-
-    print(f"best_train_ari: {best_train_ari}, best_val_ari: {best_ari}")
-    print(ari_trains)
-    print(ari_tests)
-    print(loss_set)
 
     # a1, a2 = gnn.get_attention()
     # print(a2[1])

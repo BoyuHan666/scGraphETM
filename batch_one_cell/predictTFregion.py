@@ -14,7 +14,8 @@ from tqdm import tqdm
 import os
 import warnings
 # https://scikit-learn.org/stable/modules/generated/sklearn.metrics.average_precision_score.html
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_curve, precision_recall_curve, roc_auc_score, average_precision_score
+import matplotlib.pyplot as plt
 
 
 import select_gpu
@@ -45,18 +46,18 @@ class CombinedModel(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, x, edge_index, num, tf_index_list, gene_index_list=None):
+    def forward(self, x, edge_index, num, tf_index_list, peak_index_list=None):
         emb = self.gnn(x, edge_index)
         pX, gX = helper2.split_tensor(emb, num)
 
         tf_embeddings = gX[tf_index_list]
-        if gene_index_list is not None:
-            gX = gX[gene_index_list]
+        if peak_index_list is not None:
+            pX = pX[peak_index_list]
 
         combined_tensors = []
         for tf_emb in tf_embeddings:
-            for g in gX:
-                combined = torch.cat((tf_emb, g), dim=-1)
+            for p in pX:
+                combined = torch.cat((tf_emb, p), dim=-1)
                 combined_tensors.append(combined)
 
         combined_matrix = torch.stack(combined_tensors, dim=0)
@@ -112,7 +113,7 @@ if __name__ == "__main__":
     num_of_peak = peak_num
     test_num_of_cell = total_cell_num - num_of_cell
     batch_num = 500
-    batch_size = int(num_of_cell / batch_num)
+    # batch_size = int(num_of_cell / batch_num)
     emb_size = 512
     # emb_graph = num_of_cell
     # emb_graph = emb_size
@@ -120,11 +121,11 @@ if __name__ == "__main__":
     gnn_conv = 'GATv2'
     num_epochs = 200
     freq = 5
-    step = 16
+    batch_size = 16
     plot_path_rel = "./plot/"
     lr = 0.001
-    param_savepath = f"./model_params/best_model_{emb_size}.pth"
-    best_ari_path = f"./model_params/best_ari_{emb_size}.pkl"
+    param_savepath = f"./model_params/best_model_node2vec_{emb_size}_2.pth"
+    best_ari_path = f"./model_params/best_ari_node2vec_{emb_size}_2.pkl"
     # param_savepath = f"./model_params/best_model_node2vec_{emb_size}2.pth"
     # best_ari_path = f"./model_params/best_ari_node2vec_{emb_size}2.pth"
     # param_savepath = None
@@ -149,24 +150,24 @@ if __name__ == "__main__":
     )
 
     # use node2vec to get lookup table
-    # Node2Vec_model = Node2Vec(edge_index, emb_size, walk_length=5, context_size=5, walks_per_node=10)
-    # Node2Vec_model = Node2Vec_model.to(device)
-    #
-    # Node2Vec_model.train()
-    # optimizer = torch.optim.Adam(Node2Vec_model.parameters(), lr=0.01)
-    # loader = Node2Vec_model.loader(batch_size=256, shuffle=False, num_workers=0)
-    # for epoch in tqdm(range(200)):
-    #     for pos_rw, neg_rw in loader:
-    #         optimizer.zero_grad()
-    #         loss = Node2Vec_model.loss(pos_rw.to(device), neg_rw.to(device))
-    #         loss.backward()
-    #         optimizer.step()
-    #
-    # node_embeddings = Node2Vec_model.embedding.weight
-    # print(f"node_embeddings shape: {node_embeddings.shape}")
+    Node2Vec_model = Node2Vec(edge_index, emb_size, walk_length=5, context_size=5, walks_per_node=10)
+    Node2Vec_model = Node2Vec_model.to(device)
 
-    fm = torch.randn((num_of_peak + num_of_gene, emb_size)).to(device)
-    # fm = node_embeddings.detach().clone().to(device)
+    Node2Vec_model.train()
+    optimizer = torch.optim.Adam(Node2Vec_model.parameters(), lr=0.01)
+    loader = Node2Vec_model.loader(batch_size=256, shuffle=False, num_workers=0)
+    for epoch in tqdm(range(200)):
+        for pos_rw, neg_rw in loader:
+            optimizer.zero_grad()
+            loss = Node2Vec_model.loss(pos_rw.to(device), neg_rw.to(device))
+            loss.backward()
+            optimizer.step()
+
+    node_embeddings = Node2Vec_model.embedding.weight
+    print(f"node_embeddings shape: {node_embeddings.shape}")
+
+    # fm = torch.randn((num_of_peak + num_of_gene, emb_size)).to(device)
+    fm = node_embeddings.detach().clone().to(device)
     print(f"fm shape: {fm.shape}")
 
     train_fm = fm
@@ -182,32 +183,32 @@ if __name__ == "__main__":
     mlp = MLP(emb_size * 2, 2).to(device)
     model = CombinedModel(gnn, mlp).to(device)
 
-    if os.path.exists(param_savepath):
-        checkpoint = torch.load(param_savepath, map_location=torch.device(device))
-        model.gnn.load_state_dict(checkpoint['gnn'])
-    else:
-        print(f"Warning: Checkpoint not found at {param_savepath}. Skipping parameter loading.")
-
-    result = []
-    tf_gene_path = '../data/TF/tf_target_in_vocab_update.txt'
-    with open(tf_gene_path, "r") as file:
-        for line in file:
-            gene_ids = line.strip().split()
-            result.append(gene_ids)
+    # if os.path.exists(param_savepath):
+    #     checkpoint = torch.load(param_savepath, map_location=torch.device(device))
+    #     model.gnn.load_state_dict(checkpoint['gnn'])
+    #     print(f"load param successfully for: {param_savepath}")
+    # else:
+    #     print(f"Warning: Checkpoint not found at {param_savepath}. Skipping parameter loading.")
 
     perf = {}
     # TODO: Here to add cell type specific adata
     unique_cell_types = gene_exp.obs['cell_type'].unique()
     split_adatas = {'all': [gene_exp, peak_exp]}
     for cell_type in unique_cell_types:
-        split_adatas[cell_type] = [gene_exp[gene_exp.obs['cell_type'] == cell_type],
-                                   peak_exp[peak_exp.obs['cell_type'] == cell_type]]
+        split_adatas[cell_type] = [gene_exp[gene_exp.obs['cell_type'] == cell_type], peak_exp[peak_exp.obs['cell_type'] == cell_type]]
 
-    for i, key in enumerate(list(split_adatas.keys())):
+    TF_region = []
+    TF_region_path = '../data/encode_filtered_by_pbmc_peak/all.txt'
+    with open(TF_region_path, 'r') as file:
+        for line in file:
+            row = line.strip().split()
+            TF_region.append(row)
+
+    for i, key in enumerate(list(split_adatas.keys())[:1]):
         [specific_gene_exp, specific_peak_exp] = split_adatas[key]
         print("=" * 20 + f"  {key}  " + "=" * 20)
-        print(specific_gene_exp)
-        print(specific_peak_exp)
+        # print(specific_gene_exp)
+        # print(specific_peak_exp)
 
         # rna
         X_rna = specific_gene_exp.X.toarray()
@@ -225,72 +226,85 @@ if __name__ == "__main__":
 
         warnings.filterwarnings("ignore", category=NumbaDeprecationWarning)
 
-        gene_id_to_index = {gene_id: index for index, gene_id in enumerate(specific_gene_exp.var['gene_ids'])}
+        TF_region_index_list = []
+        TF_region_save_path = f'../data/encode_filtered_by_pbmc_peak/{key}_TF_region_index_list.pkl'
+        if os.path.exists(TF_region_save_path):
+            with open(TF_region_save_path, 'rb') as f:
+                TF_region_index_list = pickle.load(f)
+        else:
+            for peak in tqdm(TF_region):
+                try:
+                    [chr_name, start, end, gene_name] = peak
+                    gene_index = list(specific_gene_exp.var_names).index(gene_name)
 
-        new_result = []
-        for pair in tqdm(result):
-            new_pair = [gene_id_to_index.get(gene_id, None) for gene_id in pair]
-            if all(index is not None for index in new_pair):
-                new_result.append(new_pair)
+                    peak_id = f"{chr_name}:{start}-{end}"
+                    if peak_id in specific_peak_exp.var_names:
+                        peak_index = list(specific_peak_exp.var_names).index(peak_id)
+                        TF_region_index_list.append([gene_index, peak_index])
+                except:
+                    pass
+            with open(TF_region_save_path, 'wb') as f:
+                pickle.dump(TF_region_index_list, f)
 
-        tf_indices = [pair[0] for pair in new_result]
+        # print(len(TF_region_index_list))
+
+        tf_indices = [pair[0] for pair in TF_region_index_list]
         unique_tf_indices = sorted(list(set(tf_indices)))
         train_tf_list, test_tf_list = mask_train_test(input_list=unique_tf_indices, ratio=0.8)
 
         train_tf_num = len(train_tf_list)
         test_tf_num = len(test_tf_list)
 
-        train_gene_index_list = []
-        test_gene_index_list = []
-        gene_index_list = []
-        for tf_gene in new_result:
-            tf_idx = tf_gene[0]
-            gene_idx = tf_gene[1]
-            if tf_idx in train_tf_list and gene_idx not in train_gene_index_list:
-                train_gene_index_list.append(gene_idx)
-            if tf_idx in test_tf_list and gene_idx not in test_gene_index_list:
-                test_gene_index_list.append(gene_idx)
-            if gene_idx not in gene_index_list:
-                gene_index_list.append(gene_idx)
+        train_peak_index_lst = []
+        test_peak_index_lst = []
+        peak_index_lst = []
+        for tf_region in TF_region_index_list:
+            tf_idx = tf_region[0]
+            peak_idx = tf_region[1]
+            if tf_idx in train_tf_list and peak_idx not in train_peak_index_lst:
+                train_peak_index_lst.append(peak_idx)
+            if tf_idx in test_tf_list and peak_idx not in test_peak_index_lst:
+                test_peak_index_lst.append(peak_idx)
+            if peak_idx not in peak_index_lst:
+                peak_index_lst.append(peak_idx)
 
-        train_gene_index_list = sorted(train_gene_index_list)
-        test_gene_index_list = sorted(test_gene_index_list)
-        gene_index_list = sorted(gene_index_list)
+        train_peak_index_lst = sorted(train_peak_index_lst)
+        test_peak_index_lst = sorted(test_peak_index_lst)
+        peak_index_lst = sorted(peak_index_lst)
 
-        train_gene_num = len(train_gene_index_list)
-        test_gene_num = len(test_gene_index_list)
-        new_gene_num = len(gene_index_list)
+        train_peak_num = len(train_peak_index_lst)
+        test_peak_num = len(test_peak_index_lst)
+        new_peak_num = len(peak_index_lst)
 
-        print(train_gene_num)
-        print(test_gene_num)
-        print(new_gene_num)
-
+        # print(train_peak_num)
+        # print(test_peak_num)
+        # print(new_peak_num)
 
         tf_index_to_unique_index = {old_index: new_index for new_index, old_index in enumerate(train_tf_list + test_tf_list)}
-        gene_index_to_unique_index = {old_index: new_index for new_index, old_index in enumerate(gene_index_list)}
-        for i, pair in enumerate(new_result):
+        peak_index_to_unique_index = {old_index: new_index for new_index, old_index in enumerate(peak_index_lst)}
+        for i, pair in enumerate(TF_region_index_list):
             new_tf_index = tf_index_to_unique_index[pair[0]]
-            new_gene_index = gene_index_to_unique_index[pair[1]]
-            new_result[i].append(new_tf_index)
-            new_result[i].append(new_gene_index)
+            new_peak_index = peak_index_to_unique_index[pair[1]]
+            TF_region_index_list[i].append(new_tf_index)
+            TF_region_index_list[i].append(new_peak_index)
 
-        train_tf_label = [0 for _ in range(train_tf_num * new_gene_num)]
-        test_tf_label = [0 for _ in range(test_tf_num * new_gene_num)]
+        train_tf_label = [0 for _ in range(train_tf_num * new_peak_num)]
+        test_tf_label = [0 for _ in range(test_tf_num * new_peak_num)]
 
-        for rel in new_result:
+        for rel in TF_region_index_list:
             tf_index = rel[2]
-            gene_index = rel[3]
+            peak_index = rel[3]
             if tf_index >= train_tf_num:
                 tf_index -= train_tf_num  # test_tf_index
             org_tf_index = rel[0]  # to mask fm
-            org_gene_index = rel[1]
+            org_peak_index = rel[1]
             flag = 'train'
             if org_tf_index in train_tf_list:
-                test_fm[peak_num + org_tf_index] = 0  # TODO: this can be comment
-                train_tf_label[tf_index * new_gene_num + gene_index] = 1
+                # test_fm[peak_num + org_tf_index] = 0  # TODO: this can be comment
+                train_tf_label[tf_index * new_peak_num + peak_index] = 1
             else:  # if tf_index is test tf index, mask the tf in feature matrix to all zero
-                train_fm[peak_num + org_tf_index] = 0  # TODO: this can be comment
-                test_tf_label[tf_index * new_gene_num + gene_index] = 1
+                # train_fm[peak_num + org_tf_index] = 0  # TODO: this can be comment
+                test_tf_label[tf_index * new_peak_num + peak_index] = 1
                 flag = 'test'
 
         train_tf_label_tensor = torch.tensor(train_tf_label, dtype=torch.long).to(device)
@@ -332,6 +346,12 @@ if __name__ == "__main__":
         test_auprc_list = []
 
         start = 0
+
+        """
+        ###########################################################################
+        Train
+        ###########################################################################
+        """
         for epoch in range(num_epochs):
             model.train()
             optimizer.zero_grad()
@@ -339,7 +359,7 @@ if __name__ == "__main__":
             output_list = []
             train_pred_probabilities_list = []
 
-            for cell in tqdm(range(step)):
+            for cell in tqdm(range(batch_size)):
                 one_cell_RNA_tensor_normalized = X_rna_tensor_normalized[cell].unsqueeze(0)
                 one_cell_ATAC_tensor_normalized = X_atac_tensor_normalized[cell].unsqueeze(0)
                 train_feature_matrix = helper2.generate_feature_matrix(
@@ -351,13 +371,12 @@ if __name__ == "__main__":
                     device=device
                 )
 
-
                 output = model(
                     x=train_feature_matrix,
                     edge_index=edge_index,
                     num=num_of_peak,
                     tf_index_list=train_tf_list,
-                    gene_index_list=gene_index_list
+                    peak_index_list=peak_index_lst
                 )
 
                 train_pred_probabilities = output[:, 1].cpu().detach().numpy()
@@ -370,8 +389,8 @@ if __name__ == "__main__":
                 # loss.backward()
                 # optimizer.step()
 
-                # if start + step <= num_of_cell:
-                #     start += step
+                # if start + batch_size <= num_of_cell:
+                #     start += batch_size
                 # else:
                 #     start = 0
 
@@ -403,7 +422,7 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     test_output_list = []
                     test_pred_probabilities_list = []
-                    for cell in tqdm(range(step)):
+                    for cell in tqdm(range(batch_size)):
                         one_cell_RNA_tensor_normalized = X_rna_tensor_normalized[cell].unsqueeze(0)
                         one_cell_ATAC_tensor_normalized = X_atac_tensor_normalized[cell].unsqueeze(0)
 
@@ -421,7 +440,7 @@ if __name__ == "__main__":
                             edge_index=edge_index,
                             num=num_of_peak,
                             tf_index_list=test_tf_list,
-                            gene_index_list=gene_index_list
+                            peak_index_list=peak_index_lst
                         )
 
                         test_pred_probabilities = test_output[:, 1].cpu().detach().numpy()
@@ -436,8 +455,8 @@ if __name__ == "__main__":
                     stacked_test_pred_probabilities = np.stack(test_pred_probabilities_list, axis=0)
                     average_test_pred_probabilities = np.mean(stacked_test_pred_probabilities, axis=0)
 
-                    # if start + step <= num_of_cell:
-                    #     start += step
+                    # if start + batch_size <= num_of_cell:
+                    #     start += batch_size
                     # else:
                     #     start = 0
 
@@ -470,6 +489,46 @@ if __name__ == "__main__":
                 train_auroc_list.append(train_auroc)
                 train_auprc_list.append(train_auprc)
 
+            if (epoch+1) == 10 and (epoch+1) % (freq*5) == 0:
+                # Compute ROC curve values
+                train_fpr, train_tpr, _ = roc_curve(train_tf_label_tensor.cpu().numpy(), average_train_pred_probabilities)
+                test_fpr, test_tpr, _ = roc_curve(test_tf_label_tensor.cpu().numpy(), average_test_pred_probabilities)
+
+                # Plot ROC curve
+                plt.clf()
+                plt.plot(train_fpr, train_tpr, label=f'Train AUROC = {train_auroc:.2f}')
+                plt.plot(test_fpr, test_tpr, label=f'Test AUROC = {test_auroc:.2f}')
+                plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
+                plt.xlabel('False Positive Rate')
+                plt.ylabel('True Positive Rate')
+                plt.title('ROC Curve')
+                plt.legend()
+                # plt.show()
+                plt.savefig(f'./plot/{key}_auroc_{(epoch+1)}.png')
+
+                # Compute Precision-Recall curve values
+                train_precision, train_recall, _ = precision_recall_curve(train_tf_label_tensor.cpu().numpy(), average_train_pred_probabilities)
+                test_precision, test_recall, _ = precision_recall_curve(test_tf_label_tensor.cpu().numpy(), average_test_pred_probabilities)
+
+                # Plot PR curve
+                plt.clf()
+                plt.plot(train_recall, train_precision, label=f'Train AUPRC = {train_auprc:.2f}')
+                plt.xlabel('Recall')
+                plt.ylabel('Precision')
+                plt.title('Precision-Recall Curve')
+                plt.legend()
+                # plt.show()
+                plt.savefig(f'./plot/{key}_train_auprc_{(epoch+1)}.png')
+
+                plt.clf()
+                plt.plot(test_recall, test_precision, label=f'Test AUPRC = {test_auprc:.2f}')
+                plt.xlabel('Recall')
+                plt.ylabel('Precision')
+                plt.title('Precision-Recall Curve')
+                plt.legend()
+                # plt.show()
+                plt.savefig(f'./plot/{key}_test_auprc_{(epoch + 1)}.png')
+
         print(loss_list)
         print(acc_list)
         print(train_auroc_list)
@@ -479,6 +538,7 @@ if __name__ == "__main__":
         print(test_acc_list)
         print(test_auroc_list)
         print(test_auprc_list)
+
 
         perf[key] = {
             'train_loss': loss_list,
@@ -491,5 +551,10 @@ if __name__ == "__main__":
             'test_auprc_list': test_auprc_list,
         }
 
+        break
+
     with open("./numerical_result/result.json", "w") as outfile:
         json.dump(perf, outfile, indent=4)
+
+
+
