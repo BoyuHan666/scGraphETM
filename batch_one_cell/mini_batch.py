@@ -23,8 +23,8 @@ def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata
 
     scRNA_test_anndata = anndata.AnnData(
         X=scRNA_adata.X[test_start:test_end, :num_of_gene].toarray())
-    scRNA_test_anndata.obs['Celltype'] = scRNA_adata.obs['cell_type'].values[
-                                         test_start:test_end]
+    scRNA_test_anndata.obs['Celltype'] = scRNA_adata.obs['cell_type'].values[test_start:test_end]
+    scRNA_test_anndata.obs['seurat_clusters'] = scRNA_adata.obs['seurat_clusters'].values[test_start:test_end]
 
     """
     =====================================================================================
@@ -41,8 +41,8 @@ def get_val_data(start, end, num_of_gene, num_of_peak, scRNA_adata, scATAC_adata
 
     scATAC_test_anndata = anndata.AnnData(
         X=scATAC_adata.X[test_start:test_end, :num_of_peak].toarray())
-    scATAC_test_anndata.obs['Celltype'] = scATAC_adata.obs['cell_type'].values[
-                                          test_start:test_end]
+    scATAC_test_anndata.obs['Celltype'] = scATAC_adata.obs['cell_type'].values[test_start:test_end]
+    scATAC_test_anndata.obs['seurat_clusters'] = scATAC_adata.obs['seurat_clusters'].values[test_start:test_end]
 
     """
     =====================================================================================
@@ -99,7 +99,7 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
 
         scRNA_mini_batch_anndata = anndata.AnnData(X=scRNA_adata_mini_batch.X[:num_of_cell, :num_of_gene].toarray())
         scRNA_mini_batch_anndata.obs['Celltype'] = scRNA_adata_mini_batch.obs['cell_type'].values[:num_of_cell]
-
+        scRNA_mini_batch_anndata.obs['seurat_clusters'] = scRNA_adata_mini_batch.obs['seurat_clusters'].values[:num_of_cell]
         """
         =====================================================================================
         Generate: X_atac_tensor, X_atac_tensor_normalized, scATAC_mini_batch_anndata
@@ -119,6 +119,7 @@ def process_mini_batch_data(scRNA_adata, scATAC_adata, device,
 
         scATAC_mini_batch_anndata = anndata.AnnData(X=scATAC_adata_mini_batch.X[:num_of_cell, :num_of_peak].toarray())
         scATAC_mini_batch_anndata.obs['Celltype'] = scATAC_adata_mini_batch.obs['cell_type'].values[:num_of_cell]
+        scATAC_mini_batch_anndata.obs['seurat_clusters'] = scATAC_adata_mini_batch.obs['seurat_clusters'].values[:num_of_cell]
 
         """
         =====================================================================================
